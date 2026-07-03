@@ -67,9 +67,9 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ================= MODEL SELECTION =================
 const TEST_MODELS = [
-  "gemini-2.0-flash",
-  "gemini-2.5-flash", 
+  "gemini-2.5-flash",  // Move this to the top
   "gemini-3.5-flash",
+  "gemini-2.0-flash",
   "gemini-flash-latest"
 ];
 
