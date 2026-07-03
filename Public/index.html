@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🤖 Ultimate AI Assistant</title>
+    
+    <!-- Ads SDK -->
+    <script src='//libtl.com/sdk.js' data-zone='11235187' data-sdk='show_11235187'></script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 30px;
+            padding: 30px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header .logo { font-size: 60px; }
+        .header h1 {
+            font-size: 2.5em;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header p { color: #aaa; margin-top: 10px; }
+        
+        .ad-banner {
+            background: rgba(255,215,0,0.1);
+            border: 1px solid rgba(255,215,0,0.2);
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .ad-banner .ad-label {
+            font-size: 0.7em;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        #adContainer {
+            min-height: 60px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .ad-btn {
+            background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%);
+            color: #000;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .ad-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 20px rgba(255,215,0,0.3);
+        }
+        
+        .user-info {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .chat-area {
+            background: rgba(0,0,0,0.3);
+            border-radius: 15px;
+            height: 400px;
+            overflow-y: auto;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .chat-area::-webkit-scrollbar { width: 6px; }
+        .chat-area::-webkit-scrollbar-thumb { background: #667eea; border-radius: 10px; }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 18px;
+            border-radius: 15px;
+            max-width: 80%;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message.user {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin-left: auto;
+            border-bottom-right-radius: 5px;
+        }
+        .message.bot {
+            background: rgba(255,255,255,0.1);
+            margin-right: auto;
+            border-bottom-left-radius: 5px;
+        }
+        .message .time { font-size: 0.7em; color: #888; margin-top: 5px; display: block; }
+        
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 25px;
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            font-size: 1em;
+            transition: all 0.3s;
+        }
+        .input-area input:focus {
+            outline: none;
+            border-color: #667eea;
+            background: rgba(255,255,255,0.1);
+        }
+        .input-area button {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 25px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .input-area button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 20px rgba(102,126,234,0.4);
+        }
+        .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+        .action-buttons button {
+            padding: 10px 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            background: transparent;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .action-buttons button:hover {
+            background: rgba(255,255,255,0.1);
+            transform: translateY(-2px);
+        }
+        
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.8em; }
+            .chat-area { height: 300px; }
+            .input-area { flex-direction: column; }
+            .input-area input { width: 100%; }
+            .input-area button { width: 100%; }
+            .message { max-width: 95%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <span class="logo">🤖</span>
+            <h1>Ultimate AI Assistant</h1>
+            <p>Your personal AI powered by Gemini</p>
+        </div>
+
+        <!-- Ad Banner -->
+        <div class="ad-banner">
+            <div class="ad-label">📢 Sponsored</div>
+            <div id="adContainer">
+                <button class="ad-btn" onclick="watchAd()">🪙 Watch Ad & Earn Coins!</button>
+            </div>
+        </div>
+
+        <div class="user-info">
+            <div>
+                <div id="userStatus">👤 User: <strong id="userId">Guest</strong></div>
+                <div id="planStatus">📊 Plan: <strong id="userPlan">🆓 Free</strong></div>
+            </div>
+            <div style="display: flex; gap: 20px;">
+                <div><div id="coinCount" style="font-size: 1.5em; font-weight: bold; color: #FFD700;">0</div><div style="font-size: 0.8em; color: #888;">Coins</div></div>
+                <div><div id="msgCount" style="font-size: 1.5em; font-weight: bold; color: #667eea;">0</div><div style="font-size: 0.8em; color: #888;">Messages</div></div>
+            </div>
+        </div>
+
+        <div class="chat-area" id="chatArea">
+            <div class="message bot">
+                🤖 Hello! I'm your AI assistant. Ask me anything!
+                <span class="time">Just now</span>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Type your message..." onkeydown="if(event.key==='Enter') sendMessage()">
+            <button id="sendBtn" onclick="sendMessage()">Send 🚀</button>
+        </div>
+
+        <div class="action-buttons">
+            <button onclick="resetChat()">🔄 Reset</button>
+            <button onclick="watchAd()">🪙 Watch Ad</button>
+            <button onclick="upgrade()">💎 Upgrade</button>
+        </div>
+    </div>
+
+    <script>
+        let userId = 'web_user_' + Date.now();
+        let coins = 0;
+        let messages = 0;
+        let isPremium = false;
+        let messageCount = 0;
+        const MAX_FREE = 5;
+
+        // Initialize
+        document.getElementById('userId').textContent = userId;
+
+        function addMessage(text, sender) {
+            const chatArea = document.getElementById('chatArea');
+            const div = document.createElement('div');
+            div.className = `message ${sender}`;
+            const time = new Date().toLocaleTimeString();
+            div.innerHTML = `${text}<span class="time">${time}</span>`;
+            chatArea.appendChild(div);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            // Check free limit
+            if (!isPremium && messageCount >= MAX_FREE) {
+                addMessage(`⚠️ Free limit reached! Watch an ad for more messages.`, 'bot');
+                input.value = '';
+                return;
+            }
+
+            input.value = '';
+            addMessage(text, 'user');
+            
+            const sendBtn = document.getElementById('sendBtn');
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Thinking...';
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text, userId: userId })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    addMessage(data.response, 'bot');
+                    messageCount++;
+                    document.getElementById('msgCount').textContent = messageCount;
+                    
+                    if (data.coins) {
+                        coins = data.coins;
+                        document.getElementById('coinCount').textContent = coins;
+                    }
+                } else {
+                    addMessage(`⚠️ ${data.error}`, 'bot');
+                }
+            } catch (error) {
+                addMessage(`⚠️ Error: ${error.message}`, 'bot');
+            }
+
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'Send 🚀';
+        }
+
+        function watchAd() {
+            addMessage(`📢 Watching ad... Please wait.`, 'bot');
+            
+            // Show ad using the SDK
+            if (typeof show_11235187 !== 'undefined') {
+                show_11235187().then(() => {
+                    // Ad watched successfully
+                    coins += 10;
+                    messageCount = Math.max(0, messageCount - 3);
+                    document.getElementById('coinCount').textContent = coins;
+                    document.getElementById('msgCount').textContent = messageCount;
+                    addMessage(`🪙 Ad watched! Earned 10 coins! +3 free messages!`, 'bot');
+                }).catch(() => {
+                    addMessage(`⚠️ Ad failed. Try again.`, 'bot');
+                });
+            } else {
+                // Fallback if ad SDK not loaded
+                coins += 10;
+                messageCount = Math.max(0, messageCount - 3);
+                document.getElementById('coinCount').textContent = coins;
+                document.getElementById('msgCount').textContent = messageCount;
+                addMessage(`🪙 Demo: Earned 10 coins! +3 free messages!`, 'bot');
+            }
+        }
+
+        function resetChat() {
+            const chatArea = document.getElementById('chatArea');
+            chatArea.innerHTML = '';
+            addMessage(`🔄 Chat reset! Fresh start!`, 'bot');
+            messageCount = 0;
+            document.getElementById('msgCount').textContent = messageCount;
+        }
+
+        function upgrade() {
+            addMessage(`💎 Opening payment...`, 'bot');
+            window.open('/buy', '_blank');
+        }
+
+        // Auto focus input
+        document.getElementById('messageInput').focus();
+
+        // API endpoints
+        app.post('/api/chat', async (req, res) => {
+            const { message, userId } = req.body;
+            
+            try {
+                // Here you would call your Gemini API
+                // For demo, returning a mock response
+                res.json({
+                    success: true,
+                    response: `🤖 You said: "${message}". This is a demo response.`,
+                    coins: coins
+                });
+            } catch (error) {
+                res.json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        });
+
+        // Health check
+        app.get('/api/health', (req, res) => {
+            res.json({ status: 'ok' });
+        });
+    </script>
+</body>
+  </html>
