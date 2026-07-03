@@ -78,6 +78,9 @@ async function setWebhook() {
     const webhookUrl = `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`;
     console.log(`🔄 Setting webhook to: ${webhookUrl}`);
     
+    // Remove any existing webhook first
+    await bot.setWebHook('', { drop_pending_updates: true });
+    
     const result = await bot.setWebHook(webhookUrl, {
       allowed_updates: ['message', 'callback_query']
     });
@@ -92,14 +95,26 @@ async function setWebhook() {
   }
 }
 
-// Webhook endpoint
-app.post(WEBHOOK_PATH, async (req, res) => {
+// Webhook endpoint - handle both GET and POST
+app.all(WEBHOOK_PATH, async (req, res) => {
   try {
+    // For GET requests - show webhook info
+    if (req.method === 'GET') {
+      const webhookInfo = await bot.getWebHookInfo();
+      return res.json({
+        status: "✅ Webhook endpoint is active",
+        webhook_info: webhookInfo,
+        method: "GET (testing)",
+        note: "Send POST requests for bot updates"
+      });
+    }
+    
+    // For POST requests - process Telegram updates
     await bot.processUpdate(req.body);
     res.sendStatus(200);
   } catch (error) {
     console.error("❌ Webhook error:", error);
-    res.sendStatus(500);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -340,15 +355,64 @@ bot.onText(/\/reset/, async (msg) => {
   );
 });
 
+// ================= WEBHOOK STATUS =================
+app.get("/webhook-status", async (req, res) => {
+  try {
+    const webhookInfo = await bot.getWebHookInfo();
+    res.json({
+      status: "Webhook status",
+      webhook_info: webhookInfo,
+      current_url: `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ================= RESET WEBHOOK =================
+app.get("/reset-webhook", async (req, res) => {
+  try {
+    await bot.setWebHook('', { drop_pending_updates: true });
+    res.json({ 
+      message: "Webhook reset successfully",
+      note: "Now set a new webhook using /set-webhook endpoint"
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/set-webhook", async (req, res) => {
+  try {
+    const webhookUrl = `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`;
+    const result = await bot.setWebHook(webhookUrl, {
+      allowed_updates: ['message', 'callback_query']
+    });
+    res.json({ 
+      message: "Webhook set successfully",
+      url: webhookUrl,
+      result: result
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ================= HEALTH CHECK =================
 app.get("/", (req, res) => {
   res.json({
     status: "✅ Bot is running",
     version: "7.0.0",
     timestamp: new Date().toISOString(),
-    botInfo: {
-      token: process.env.BOT_TOKEN ? "Set ✅" : "Not Set ❌",
-      webhook: process.env.WEBHOOK_URL || "Not Set ❌"
+    webhook: `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`,
+    endpoints: {
+      webhook: WEBHOOK_PATH,
+      webhookStatus: "/webhook-status",
+      resetWebhook: "/reset-webhook",
+      setWebhook: "/set-webhook",
+      health: "/health",
+      success: "/success",
+      cancel: "/cancel"
     }
   });
 });
@@ -357,7 +421,8 @@ app.get("/health", (req, res) => {
   res.json({ 
     status: "healthy",
     uptime: process.uptime(),
-    dbUsers: Object.keys(db.users).length
+    dbUsers: Object.keys(db.users).length,
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -371,6 +436,13 @@ app.listen(PORT, async () => {
   
   console.log(`✅ Bot is ready!`);
   console.log(`👥 Users in DB: ${Object.keys(db.users).length}`);
+  console.log(`\n📋 Available endpoints:`);
+  console.log(`   GET  / - Health check`);
+  console.log(`   GET  ${WEBHOOK_PATH} - Webhook status`);
+  console.log(`   GET  /webhook-status - Webhook info`);
+  console.log(`   GET  /reset-webhook - Reset webhook`);
+  console.log(`   GET  /set-webhook - Set webhook`);
+  console.log(`   POST ${WEBHOOK_PATH} - Telegram webhook endpoint`);
 });
 
 // Handle uncaught errors
