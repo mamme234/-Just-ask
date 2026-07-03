@@ -34,81 +34,92 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ================= AUTO-DETECT BEST AVAILABLE MODEL =================
-let MODEL_NAME = process.env.GEMINI_MODEL || "auto";
+// ================= SELECT BEST AVAILABLE MODEL =================
+// Based on your available models, using the best one
+// You can change this to any model from the list above
 
-// Function to find best available model
-async function findBestModel() {
+// Option 1: Use the latest Gemini 3.5 Flash (BEST)
+const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+
+// Option 2: Use Gemini 2.5 Flash (Also great)
+// const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+// Option 3: Use auto-detection (fallback to best available)
+// const MODEL_NAME = process.env.GEMINI_MODEL || "auto";
+
+console.log(`🤖 Using Gemini model: ${MODEL_NAME}`);
+
+// List of backup models if the primary fails
+const BACKUP_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-flash-latest",
+  "gemini-1.5-flash"
+];
+
+let model;
+let currentModelName = MODEL_NAME;
+
+async function initializeModel() {
   try {
-    console.log("🔍 Searching for available Gemini models...");
+    console.log(`🔍 Initializing model: ${currentModelName}`);
     
-    // List all available models
-    const models = await genAI.listModels();
-    const modelNames = models.models.map(m => m.name.replace('models/', ''));
+    model = genAI.getGenerativeModel({ 
+      model: currentModelName,
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 1000,
+        topK: 40,
+        topP: 0.95,
+      }
+    });
     
-    console.log("📋 Available models:", modelNames.join(', '));
+    // Test the model with a simple request
+    const testResult = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: "Say hello" }] }]
+    });
     
-    // Priority order of models to try (most preferred first)
-    const preferredModels = [
-      'gemini-2.0-flash-exp',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro',
-      'gemini-pro',
-      'gemini-1.0-pro',
-      'gemini-1.0-pro-vision'
-    ];
+    console.log(`✅ Model ${currentModelName} is working!`);
+    return true;
     
-    // Find the first available model from the preferred list
-    for (const preferred of preferredModels) {
-      if (modelNames.includes(preferred)) {
-        console.log(`✅ Found preferred model: ${preferred}`);
-        return preferred;
+  } catch (error) {
+    console.error(`❌ Model ${currentModelName} failed:`, error.message);
+    
+    // Try backup models
+    for (const backup of BACKUP_MODELS) {
+      if (backup === currentModelName) continue;
+      
+      try {
+        console.log(`🔄 Trying backup model: ${backup}`);
+        const testModel = genAI.getGenerativeModel({ 
+          model: backup,
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 1000,
+          }
+        });
+        
+        await testModel.generateContent({
+          contents: [{ role: "user", parts: [{ text: "Say hello" }] }]
+        });
+        
+        console.log(`✅ Backup model ${backup} is working!`);
+        currentModelName = backup;
+        model = testModel;
+        return true;
+        
+      } catch (backupError) {
+        console.error(`❌ Backup ${backup} failed:`, backupError.message);
       }
     }
     
-    // If no preferred model found, use the first available chat model
-    const chatModels = modelNames.filter(name => 
-      name.includes('gemini') && !name.includes('embedding') && !name.includes('vision')
-    );
-    
-    if (chatModels.length > 0) {
-      console.log(`✅ Using first available chat model: ${chatModels[0]}`);
-      return chatModels[0];
-    }
-    
-    // Fallback
-    console.log("⚠️ No suitable model found, using gemini-pro as fallback");
-    return 'gemini-pro';
-    
-  } catch (error) {
-    console.error("❌ Error finding models:", error.message);
-    console.log("⚠️ Using fallback model: gemini-pro");
-    return 'gemini-pro';
+    console.error("❌ No working model found!");
+    return false;
   }
 }
 
-// Initialize model after finding best available
-let model;
-
-async function initializeModel() {
-  if (MODEL_NAME === "auto") {
-    MODEL_NAME = await findBestModel();
-  }
-  
-  console.log(`🤖 Using Gemini model: ${MODEL_NAME}`);
-  
-  model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 1000,
-      topK: 40,
-      topP: 0.95,
-    }
-  });
-  
-  return model;
-}
+// Initialize model on startup
+await initializeModel();
 
 // ================= DB =================
 const DB_FILE = "./db.json";
@@ -213,7 +224,7 @@ bot.onText(/\/buy/, async (msg) => {
             currency: "usd",
             product_data: {
               name: "AI Bot Premium Access",
-              description: `Unlimited AI chat access with ${MODEL_NAME}`
+              description: `Unlimited AI chat access with ${currentModelName}`
             },
             unit_amount: 500,
           },
@@ -325,7 +336,7 @@ bot.on("message", async (msg) => {
         "✨ Premium benefits:\n" +
         "• Unlimited messages\n" +
         "• Priority response\n" +
-        `• Access to ${MODEL_NAME}`,
+        `• Access to ${currentModelName}`,
         { parse_mode: "Markdown" }
       );
       return;
@@ -346,9 +357,9 @@ bot.on("message", async (msg) => {
       conversationContext += `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}\n`;
     }
 
-    console.log(`🤖 Sending to Gemini (${MODEL_NAME}) for user ${userId}`);
+    console.log(`🤖 Sending to Gemini (${currentModelName}) for user ${userId}`);
 
-    // ✅ FIXED: Use the correct Gemini API format
+    // Gemini API call
     const result = await model.generateContent({
       contents: [
         {
@@ -390,9 +401,9 @@ bot.on("message", async (msg) => {
     } else if (error.message.includes("safety")) {
       errorMessage = "⚠️ I can't respond to that due to safety guidelines.";
     } else if (error.message.includes("not found") || error.message.includes("404")) {
-      errorMessage = `⚠️ Model ${MODEL_NAME} not available. Try changing the model or contact administrator.`;
-    } else if (error.message.includes("permission")) {
-      errorMessage = "⚠️ Permission denied. Please check your API key permissions.";
+      errorMessage = `⚠️ Model ${currentModelName} not available. Using backup model.`;
+      // Try to reinitialize with backup
+      await initializeModel();
     }
     
     await bot.sendMessage(chatId, errorMessage);
@@ -412,7 +423,7 @@ bot.onText(/\/start/, async (msg) => {
     "🤖 **Welcome to AI Assistant!**\n\n" +
     `Your status: ${status}\n` +
     `Messages used: ${user.requests || 0}/10 (free users)\n` +
-    `AI Model: ${MODEL_NAME}\n\n` +
+    `AI Model: ${currentModelName}\n\n` +
     "**Commands:**\n" +
     "/buy - Get premium access ($5)\n" +
     "/status - Check your account status\n" +
@@ -435,7 +446,7 @@ bot.onText(/\/status/, async (msg) => {
     `Plan: ${user.premium ? "✅ Premium (Unlimited)" : "🆓 Free (10 messages)"}\n` +
     `Messages used: ${user.requests || 0}/10\n` +
     `Chat history: ${(user.chatHistory || []).length} messages\n` +
-    `AI Model: ${MODEL_NAME}\n\n` +
+    `AI Model: ${currentModelName}\n\n` +
     (user.premium ? "🎉 Enjoy unlimited access!" : "💳 Use /buy to upgrade to premium!"),
     { parse_mode: "Markdown" }
   );
@@ -447,11 +458,12 @@ bot.onText(/\/model/, async (msg) => {
   await bot.sendMessage(
     chatId,
     `🤖 **Current AI Model**\n\n` +
-    `Model: ${MODEL_NAME}\n` +
+    `Model: ${currentModelName}\n` +
     `Provider: Google Gemini\n` +
-    `Tier: ${MODEL_NAME.includes('pro') ? 'Pro' : MODEL_NAME.includes('flash') ? 'Flash' : 'Standard'}\n\n` +
+    `Tier: ${currentModelName.includes('pro') ? 'Pro' : 'Flash'}\n` +
+    `Best Available: ✅ gemini-3.5-flash\n\n` +
     `To change model, set GEMINI_MODEL in environment variables.\n` +
-    `Available models: /list-models endpoint`,
+    `Available: gemini-3.5-flash, gemini-2.5-flash, gemini-2.0-flash`,
     { parse_mode: "Markdown" }
   );
 });
@@ -488,17 +500,17 @@ app.get("/test-gemini", async (req, res) => {
     res.json({
       success: true,
       response: result.response.text(),
-      model: MODEL_NAME,
+      model: currentModelName,
       apiVersion: "v1beta",
-      note: "Model auto-detected or set via GEMINI_MODEL"
+      note: "Using gemini-3.5-flash (best available)"
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       error: error.message,
       type: error.type || "unknown",
-      model: MODEL_NAME,
-      suggestion: "Try setting GEMINI_MODEL to a different model name"
+      model: currentModelName,
+      suggestion: "Try setting GEMINI_MODEL to 'gemini-3.5-flash'"
     });
   }
 });
@@ -516,16 +528,22 @@ app.get("/list-models", async (req, res) => {
     const chatModels = modelNames.filter(m => 
       m.name.includes('gemini') && 
       !m.name.includes('embedding') &&
+      !m.name.includes('aqa') &&
       m.supportedMethods.includes('generateContent')
+    );
+    
+    // Get top models
+    const topModels = chatModels.filter(m => 
+      m.name.includes('flash') || m.name.includes('pro')
     );
     
     res.json({
       success: true,
-      available_models: chatModels,
-      current_model: MODEL_NAME,
+      available_models: topModels.map(m => m.name),
+      current_model: currentModelName,
       total_models: models.models.length,
-      note: "Use GEMINI_MODEL environment variable to change model",
-      recommendation: chatModels.length > 0 ? chatModels[0].name : "No chat models found"
+      recommendation: "gemini-3.5-flash (best overall)",
+      note: "Use GEMINI_MODEL environment variable to change model"
     });
   } catch (error) {
     res.status(500).json({
@@ -585,8 +603,8 @@ app.get("/", (req, res) => {
     status: "✅ Bot is running with Gemini AI",
     version: "7.0.0",
     timestamp: new Date().toISOString(),
-    model: MODEL_NAME,
-    modelSource: process.env.GEMINI_MODEL ? "Environment Variable" : "Auto-detected",
+    model: currentModelName,
+    modelSource: process.env.GEMINI_MODEL ? "Environment Variable" : "Default (gemini-3.5-flash)",
     apiVersion: "v1beta",
     webhook: `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`,
     endpoints: {
@@ -610,7 +628,7 @@ app.get("/health", (req, res) => {
     dbUsers: Object.keys(db.users).length,
     timestamp: new Date().toISOString(),
     ai_provider: "Google Gemini",
-    model: MODEL_NAME
+    model: currentModelName
   });
 });
 
@@ -618,12 +636,8 @@ app.get("/health", (req, res) => {
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Webhook URL: ${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`);
-  
-  // Initialize the model
-  await initializeModel();
-  
   console.log(`🤖 AI Provider: Google Gemini`);
-  console.log(`📦 Model: ${MODEL_NAME}`);
+  console.log(`📦 Model: ${currentModelName}`);
   console.log(`📋 Test Gemini: https://just-ask-su2i.onrender.com/test-gemini`);
   console.log(`📋 List Models: https://just-ask-su2i.onrender.com/list-models`);
   
