@@ -1,6 +1,6 @@
 {
-  "name": "real-money-ai-bot",
-  "version": "7.0.0",
+  "name": "ultimate-ai-bot",
+  "version": "8.0.0",
   "type": "module",
   "main": "index.js",
   "scripts": {
