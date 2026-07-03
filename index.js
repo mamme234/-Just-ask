@@ -16,6 +16,7 @@ const PORT = process.env.PORT || 3000;
 console.log("🔍 Checking environment variables...");
 console.log("BOT_TOKEN:", process.env.BOT_TOKEN ? "✅ Set" : "❌ Missing");
 console.log("GEMINI_API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
+console.log("GEMINI_MODEL:", process.env.GEMINI_MODEL || "Using default: gemini-pro");
 console.log("STRIPE_SECRET_KEY:", process.env.STRIPE_SECRET_KEY ? "✅ Set" : "❌ Missing");
 console.log("WEBHOOK_URL:", process.env.WEBHOOK_URL || "❌ Missing");
 
@@ -31,14 +32,26 @@ for (const env of requiredEnv) {
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Initialize Gemini
+// Initialize Gemini with model from environment variable or default
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-// Use gemini-1.5-flash for free tier (generous limits)
+
+// Available Gemini models (free tier):
+// gemini-pro - Most stable, widely available (RECOMMENDED)
+// gemini-1.0-pro - Same as gemini-pro
+// gemini-1.5-pro - Newer pro model (may have limits)
+// gemini-1.5-flash - Faster, good for free tier
+// gemini-2.0-flash-exp - Experimental (may not work)
+
+const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-pro";
+console.log(`🤖 Using Gemini model: ${MODEL_NAME}`);
+
 const model = genAI.getGenerativeModel({ 
-  model: "gemini-1.5-flash",
+  model: MODEL_NAME,
   generationConfig: {
     temperature: 0.7,
     maxOutputTokens: 1000,
+    topK: 40,
+    topP: 0.95,
   }
 });
 
@@ -76,7 +89,7 @@ function getUser(id) {
     db.users[userId] = {
       premium: false,
       requests: 0,
-      chatHistory: [] // Store chat history for context
+      chatHistory: []
     };
     saveDB();
   }
@@ -145,9 +158,9 @@ bot.onText(/\/buy/, async (msg) => {
             currency: "usd",
             product_data: {
               name: "AI Bot Premium Access",
-              description: "Unlimited AI chat access"
+              description: `Unlimited AI chat access with ${MODEL_NAME}`
             },
-            unit_amount: 500, // $5.00
+            unit_amount: 500,
           },
           quantity: 1,
         },
@@ -241,16 +254,13 @@ bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
 
-  // Ignore non-text messages and commands
   if (!msg.text || msg.text.startsWith("/")) return;
 
   try {
     const user = getUser(userId);
 
-    // Increment request count
     user.requests = (user.requests || 0) + 1;
 
-    // Check premium status and limits (Free: 10 messages)
     if (!user.premium && user.requests > 10) {
       await bot.sendMessage(
         chatId,
@@ -260,7 +270,7 @@ bot.on("message", async (msg) => {
         "✨ Premium benefits:\n" +
         "• Unlimited messages\n" +
         "• Priority response\n" +
-        "• Access to Gemini AI",
+        `• Access to ${MODEL_NAME}`,
         { parse_mode: "Markdown" }
       );
       return;
@@ -268,24 +278,22 @@ bot.on("message", async (msg) => {
 
     await bot.sendChatAction(chatId, "typing");
 
-    // Store user message
     user.chatHistory = user.chatHistory || [];
     user.chatHistory.push({ role: "user", text: msg.text });
 
-    // Keep history manageable (last 10 exchanges)
     if (user.chatHistory.length > 20) {
       user.chatHistory = user.chatHistory.slice(-20);
     }
 
-    // Build conversation context for Gemini
+    // Build conversation context
     let conversationContext = "";
     for (const entry of user.chatHistory) {
       conversationContext += `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}\n`;
     }
 
-    console.log(`🤖 Sending to Gemini for user ${userId}`);
+    console.log(`🤖 Sending to Gemini (${MODEL_NAME}) for user ${userId}`);
 
-    // Call Gemini API
+    // Gemini API call
     const result = await model.generateContent({
       contents: [
         {
@@ -299,11 +307,9 @@ bot.on("message", async (msg) => {
 
     const answer = result.response.text();
 
-    // Store assistant response
     user.chatHistory.push({ role: "assistant", text: answer });
     saveDB();
 
-    // Send response (handle Telegram's 4096 char limit)
     if (answer.length > 4096) {
       for (let i = 0; i < answer.length; i += 4096) {
         const chunk = answer.substring(i, i + 4096);
@@ -328,13 +334,15 @@ bot.on("message", async (msg) => {
       errorMessage = "⚠️ Free tier limit reached. Try again later or use /buy to upgrade.";
     } else if (error.message.includes("safety")) {
       errorMessage = "⚠️ I can't respond to that due to safety guidelines.";
+    } else if (error.message.includes("not found")) {
+      errorMessage = `⚠️ Model ${MODEL_NAME} not available. Try changing the model.`;
     }
     
     await bot.sendMessage(chatId, errorMessage);
   }
 });
 
-// ================= START COMMAND =================
+// ================= COMMANDS =================
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -346,17 +354,18 @@ bot.onText(/\/start/, async (msg) => {
     chatId,
     "🤖 **Welcome to AI Assistant!**\n\n" +
     `Your status: ${status}\n` +
-    `Messages used: ${user.requests || 0}/10 (free users)\n\n` +
+    `Messages used: ${user.requests || 0}/10 (free users)\n` +
+    `AI Model: ${MODEL_NAME}\n\n` +
     "**Commands:**\n" +
     "/buy - Get premium access ($5)\n" +
     "/status - Check your account status\n" +
-    "/reset - Reset your chat history\n\n" +
+    "/reset - Reset your chat history\n" +
+    "/model - Show current AI model\n\n" +
     "Just send me any message to start chatting! 💬",
     { parse_mode: "Markdown" }
   );
 });
 
-// ================= STATUS COMMAND =================
 bot.onText(/\/status/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -368,13 +377,31 @@ bot.onText(/\/status/, async (msg) => {
     "📊 **Your Account Status**\n\n" +
     `Plan: ${user.premium ? "✅ Premium (Unlimited)" : "🆓 Free (10 messages)"}\n` +
     `Messages used: ${user.requests || 0}/10\n` +
-    `Chat history: ${(user.chatHistory || []).length} messages\n\n` +
+    `Chat history: ${(user.chatHistory || []).length} messages\n` +
+    `AI Model: ${MODEL_NAME}\n\n` +
     (user.premium ? "🎉 Enjoy unlimited access!" : "💳 Use /buy to upgrade to premium!"),
     { parse_mode: "Markdown" }
   );
 });
 
-// ================= RESET COMMAND =================
+bot.onText(/\/model/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  await bot.sendMessage(
+    chatId,
+    `🤖 **Current AI Model**\n\n` +
+    `Model: ${MODEL_NAME}\n` +
+    `Provider: Google Gemini\n` +
+    `Tier: ${MODEL_NAME.includes('pro') ? 'Pro' : MODEL_NAME.includes('flash') ? 'Flash' : 'Standard'}\n\n` +
+    `Available models:\n` +
+    `• gemini-pro (recommended)\n` +
+    `• gemini-1.5-pro (latest pro)\n` +
+    `• gemini-1.5-flash (fast)\n\n` +
+    `To change model, set GEMINI_MODEL in environment variables.`,
+    { parse_mode: "Markdown" }
+  );
+});
+
 bot.onText(/\/reset/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -395,23 +422,48 @@ bot.onText(/\/reset/, async (msg) => {
 app.get("/test-gemini", async (req, res) => {
   try {
     const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: "Say hello" }] }]
+      contents: [{ 
+        role: "user", 
+        parts: [{ text: "Say hello and tell me your model name" }] 
+      }]
     });
     res.json({
       success: true,
       response: result.response.text(),
-      model: "gemini-1.5-flash"
+      model: MODEL_NAME,
+      apiVersion: "v1beta",
+      note: "Using model from environment variable GEMINI_MODEL"
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       error: error.message,
-      type: error.type
+      type: error.type || "unknown",
+      model: MODEL_NAME,
+      suggestion: "Try changing GEMINI_MODEL to 'gemini-pro'"
     });
   }
 });
 
-// ================= WEBHOOK STATUS =================
+// ================= LIST AVAILABLE MODELS =================
+app.get("/list-models", async (req, res) => {
+  try {
+    const models = await genAI.listModels();
+    res.json({
+      success: true,
+      models: models,
+      current_model: MODEL_NAME,
+      note: "Use GEMINI_MODEL environment variable to change model"
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ================= WEBHOOK ENDPOINTS =================
 app.get("/webhook-status", async (req, res) => {
   try {
     const webhookInfo = await bot.getWebHookInfo();
@@ -460,7 +512,9 @@ app.get("/", (req, res) => {
     status: "✅ Bot is running with Gemini AI",
     version: "7.0.0",
     timestamp: new Date().toISOString(),
-    model: "gemini-1.5-flash (free tier)",
+    model: MODEL_NAME,
+    modelSource: process.env.GEMINI_MODEL ? "Environment Variable" : "Default",
+    apiVersion: "v1beta",
     webhook: `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`,
     endpoints: {
       webhook: WEBHOOK_PATH,
@@ -469,6 +523,7 @@ app.get("/", (req, res) => {
       setWebhook: "/set-webhook",
       health: "/health",
       testGemini: "/test-gemini",
+      listModels: "/list-models",
       success: "/success",
       cancel: "/cancel"
     }
@@ -482,7 +537,7 @@ app.get("/health", (req, res) => {
     dbUsers: Object.keys(db.users).length,
     timestamp: new Date().toISOString(),
     ai_provider: "Google Gemini",
-    model: "gemini-1.5-flash"
+    model: MODEL_NAME
   });
 });
 
@@ -490,8 +545,10 @@ app.get("/health", (req, res) => {
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Webhook URL: ${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`);
-  console.log(`🤖 AI Provider: Google Gemini (Free Tier)`);
+  console.log(`🤖 AI Provider: Google Gemini`);
+  console.log(`📦 Model: ${MODEL_NAME}`);
   console.log(`📋 Test Gemini: https://just-ask-su2i.onrender.com/test-gemini`);
+  console.log(`📋 List Models: https://just-ask-su2i.onrender.com/list-models`);
   
   await setWebhook();
   
@@ -499,7 +556,6 @@ app.listen(PORT, async () => {
   console.log(`👥 Users in DB: ${Object.keys(db.users).length}`);
 });
 
-// Handle uncaught errors
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error);
 });
