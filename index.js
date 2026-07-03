@@ -2,8 +2,8 @@ import express from "express";
 import TelegramBot from "node-telegram-bot-api";
 import dotenv from "dotenv";
 import fs from "fs";
-import OpenAI from "openai";
 import Stripe from "stripe";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -13,7 +13,13 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // ================= VALIDATE ENV VARIABLES =================
-const requiredEnv = ['BOT_TOKEN', 'OPENAI_API_KEY', 'STRIPE_SECRET_KEY', 'WEBHOOK_URL'];
+console.log("🔍 Checking environment variables...");
+console.log("BOT_TOKEN:", process.env.BOT_TOKEN ? "✅ Set" : "❌ Missing");
+console.log("GEMINI_API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
+console.log("STRIPE_SECRET_KEY:", process.env.STRIPE_SECRET_KEY ? "✅ Set" : "❌ Missing");
+console.log("WEBHOOK_URL:", process.env.WEBHOOK_URL || "❌ Missing");
+
+const requiredEnv = ['BOT_TOKEN', 'GEMINI_API_KEY', 'STRIPE_SECRET_KEY', 'WEBHOOK_URL'];
 for (const env of requiredEnv) {
   if (!process.env[env]) {
     console.error(`❌ Missing required environment variable: ${env}`);
@@ -23,8 +29,18 @@ for (const env of requiredEnv) {
 
 // ================= INITIALIZE SERVICES =================
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Use gemini-1.5-flash for free tier (generous limits)
+const model = genAI.getGenerativeModel({ 
+  model: "gemini-1.5-flash",
+  generationConfig: {
+    temperature: 0.7,
+    maxOutputTokens: 1000,
+  }
+});
 
 // ================= DB =================
 const DB_FILE = "./db.json";
@@ -60,9 +76,7 @@ function getUser(id) {
     db.users[userId] = {
       premium: false,
       requests: 0,
-      messages: [
-        { role: "system", content: "You are a smart AI assistant." }
-      ]
+      chatHistory: [] // Store chat history for context
     };
     saveDB();
   }
@@ -72,14 +86,14 @@ function getUser(id) {
 // ================= WEBHOOK =================
 const WEBHOOK_PATH = `/webhook/${process.env.BOT_TOKEN}`;
 
-// Set webhook with retry logic
 async function setWebhook() {
   try {
-    const webhookUrl = `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`;
+    const baseUrl = process.env.WEBHOOK_URL.replace(/\/$/, '');
+    const webhookUrl = `${baseUrl}${WEBHOOK_PATH}`;
     console.log(`🔄 Setting webhook to: ${webhookUrl}`);
     
-    // Remove any existing webhook first
     await bot.setWebHook('', { drop_pending_updates: true });
+    console.log('✅ Old webhook removed');
     
     const result = await bot.setWebHook(webhookUrl, {
       allowed_updates: ['message', 'callback_query']
@@ -95,10 +109,9 @@ async function setWebhook() {
   }
 }
 
-// Webhook endpoint - handle both GET and POST
+// Webhook endpoint
 app.all(WEBHOOK_PATH, async (req, res) => {
   try {
-    // For GET requests - show webhook info
     if (req.method === 'GET') {
       const webhookInfo = await bot.getWebHookInfo();
       return res.json({
@@ -109,7 +122,6 @@ app.all(WEBHOOK_PATH, async (req, res) => {
       });
     }
     
-    // For POST requests - process Telegram updates
     await bot.processUpdate(req.body);
     res.sendStatus(200);
   } catch (error) {
@@ -165,16 +177,14 @@ app.get("/success", async (req, res) => {
 
   if (userId) {
     try {
-      // Verify the payment was successful
       if (sessionId) {
         const session = await stripe.checkout.sessions.retrieve(sessionId);
         if (session.payment_status === 'paid') {
           const user = getUser(userId);
           user.premium = true;
-          user.requests = 0; // Reset requests on upgrade
+          user.requests = 0;
           saveDB();
           
-          // Notify user in Telegram
           await bot.sendMessage(
             userId, 
             "🎉 **Payment successful!** \n\nYou now have premium access. Enjoy unlimited AI chat! 🚀",
@@ -226,7 +236,7 @@ app.get("/cancel", (req, res) => {
   `);
 });
 
-// ================= AI CHAT =================
+// ================= AI CHAT WITH GEMINI =================
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -240,7 +250,7 @@ bot.on("message", async (msg) => {
     // Increment request count
     user.requests = (user.requests || 0) + 1;
 
-    // Check premium status and limits
+    // Check premium status and limits (Free: 10 messages)
     if (!user.premium && user.requests > 10) {
       await bot.sendMessage(
         chatId,
@@ -250,37 +260,50 @@ bot.on("message", async (msg) => {
         "✨ Premium benefits:\n" +
         "• Unlimited messages\n" +
         "• Priority response\n" +
-        "• Access to GPT-4o-mini",
+        "• Access to Gemini AI",
         { parse_mode: "Markdown" }
       );
       return;
     }
 
-    // Add user message to history
-    user.messages.push({ role: "user", content: msg.text });
-
-    // Keep conversation history manageable (last 20 messages)
-    if (user.messages.length > 21) {
-      user.messages = user.messages.slice(0, 1).concat(user.messages.slice(-20));
-    }
-
     await bot.sendChatAction(chatId, "typing");
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: user.messages,
-      max_tokens: 1000,
-      temperature: 0.7,
+    // Store user message
+    user.chatHistory = user.chatHistory || [];
+    user.chatHistory.push({ role: "user", text: msg.text });
+
+    // Keep history manageable (last 10 exchanges)
+    if (user.chatHistory.length > 20) {
+      user.chatHistory = user.chatHistory.slice(-20);
+    }
+
+    // Build conversation context for Gemini
+    let conversationContext = "";
+    for (const entry of user.chatHistory) {
+      conversationContext += `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}\n`;
+    }
+
+    console.log(`🤖 Sending to Gemini for user ${userId}`);
+
+    // Call Gemini API
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [{ 
+            text: `You are a smart AI assistant. Here is the conversation history:\n${conversationContext}\nAssistant: Please respond to the latest message.` 
+          }]
+        }
+      ]
     });
 
-    const answer = response.choices[0].message.content;
+    const answer = result.response.text();
 
-    // Add assistant response to history
-    user.messages.push({ role: "assistant", content: answer });
-
+    // Store assistant response
+    user.chatHistory.push({ role: "assistant", text: answer });
     saveDB();
 
-    // Send response in chunks if too long (Telegram limit: 4096 chars)
+    // Send response (handle Telegram's 4096 char limit)
     if (answer.length > 4096) {
       for (let i = 0; i < answer.length; i += 4096) {
         const chunk = answer.substring(i, i + 4096);
@@ -291,8 +314,23 @@ bot.on("message", async (msg) => {
     }
 
   } catch (error) {
-    console.error("❌ AI error:", error);
-    await bot.sendMessage(chatId, "⚠️ Sorry, I'm having trouble processing your request. Please try again.");
+    console.error("❌ Gemini AI error:", {
+      message: error.message,
+      status: error.status,
+      stack: error.stack
+    });
+    
+    let errorMessage = "⚠️ Sorry, I'm having trouble processing your request. Please try again.";
+    
+    if (error.message.includes("API key")) {
+      errorMessage = "⚠️ Gemini API key is invalid. Please contact the bot administrator.";
+    } else if (error.message.includes("quota") || error.message.includes("limit")) {
+      errorMessage = "⚠️ Free tier limit reached. Try again later or use /buy to upgrade.";
+    } else if (error.message.includes("safety")) {
+      errorMessage = "⚠️ I can't respond to that due to safety guidelines.";
+    }
+    
+    await bot.sendMessage(chatId, errorMessage);
   }
 });
 
@@ -330,7 +368,7 @@ bot.onText(/\/status/, async (msg) => {
     "📊 **Your Account Status**\n\n" +
     `Plan: ${user.premium ? "✅ Premium (Unlimited)" : "🆓 Free (10 messages)"}\n` +
     `Messages used: ${user.requests || 0}/10\n` +
-    `Chat history: ${(user.messages.length - 1)} messages\n\n` +
+    `Chat history: ${(user.chatHistory || []).length} messages\n\n` +
     (user.premium ? "🎉 Enjoy unlimited access!" : "💳 Use /buy to upgrade to premium!"),
     { parse_mode: "Markdown" }
   );
@@ -342,9 +380,7 @@ bot.onText(/\/reset/, async (msg) => {
   const userId = String(msg.from.id);
   
   const user = getUser(userId);
-  user.messages = [
-    { role: "system", content: "You are a smart AI assistant." }
-  ];
+  user.chatHistory = [];
   user.requests = user.premium ? 0 : 0;
   saveDB();
   
@@ -353,6 +389,26 @@ bot.onText(/\/reset/, async (msg) => {
     "🔄 **Chat history reset!**\n\nStarting fresh conversation.",
     { parse_mode: "Markdown" }
   );
+});
+
+// ================= TEST GEMINI ENDPOINT =================
+app.get("/test-gemini", async (req, res) => {
+  try {
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: "Say hello" }] }]
+    });
+    res.json({
+      success: true,
+      response: result.response.text(),
+      model: "gemini-1.5-flash"
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      type: error.type
+    });
+  }
 });
 
 // ================= WEBHOOK STATUS =================
@@ -369,7 +425,6 @@ app.get("/webhook-status", async (req, res) => {
   }
 });
 
-// ================= RESET WEBHOOK =================
 app.get("/reset-webhook", async (req, res) => {
   try {
     await bot.setWebHook('', { drop_pending_updates: true });
@@ -384,7 +439,8 @@ app.get("/reset-webhook", async (req, res) => {
 
 app.get("/set-webhook", async (req, res) => {
   try {
-    const webhookUrl = `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`;
+    const baseUrl = process.env.WEBHOOK_URL.replace(/\/$/, '');
+    const webhookUrl = `${baseUrl}${WEBHOOK_PATH}`;
     const result = await bot.setWebHook(webhookUrl, {
       allowed_updates: ['message', 'callback_query']
     });
@@ -401,9 +457,10 @@ app.get("/set-webhook", async (req, res) => {
 // ================= HEALTH CHECK =================
 app.get("/", (req, res) => {
   res.json({
-    status: "✅ Bot is running",
+    status: "✅ Bot is running with Gemini AI",
     version: "7.0.0",
     timestamp: new Date().toISOString(),
+    model: "gemini-1.5-flash (free tier)",
     webhook: `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`,
     endpoints: {
       webhook: WEBHOOK_PATH,
@@ -411,6 +468,7 @@ app.get("/", (req, res) => {
       resetWebhook: "/reset-webhook",
       setWebhook: "/set-webhook",
       health: "/health",
+      testGemini: "/test-gemini",
       success: "/success",
       cancel: "/cancel"
     }
@@ -422,7 +480,9 @@ app.get("/health", (req, res) => {
     status: "healthy",
     uptime: process.uptime(),
     dbUsers: Object.keys(db.users).length,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    ai_provider: "Google Gemini",
+    model: "gemini-1.5-flash"
   });
 });
 
@@ -430,19 +490,13 @@ app.get("/health", (req, res) => {
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Webhook URL: ${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`);
+  console.log(`🤖 AI Provider: Google Gemini (Free Tier)`);
+  console.log(`📋 Test Gemini: https://just-ask-su2i.onrender.com/test-gemini`);
   
-  // Set webhook
   await setWebhook();
   
   console.log(`✅ Bot is ready!`);
   console.log(`👥 Users in DB: ${Object.keys(db.users).length}`);
-  console.log(`\n📋 Available endpoints:`);
-  console.log(`   GET  / - Health check`);
-  console.log(`   GET  ${WEBHOOK_PATH} - Webhook status`);
-  console.log(`   GET  /webhook-status - Webhook info`);
-  console.log(`   GET  /reset-webhook - Reset webhook`);
-  console.log(`   GET  /set-webhook - Set webhook`);
-  console.log(`   POST ${WEBHOOK_PATH} - Telegram webhook endpoint`);
 });
 
 // Handle uncaught errors
