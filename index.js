@@ -34,27 +34,16 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ================= SELECT BEST AVAILABLE MODEL =================
-// Based on your available models, using the best one
-// You can change this to any model from the list above
-
-// Option 1: Use the latest Gemini 3.5 Flash (BEST)
+// ================= BEST MODEL SELECTION =================
+// Use Gemini 3.5 Flash - Best available from your list
 const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-
-// Option 2: Use Gemini 2.5 Flash (Also great)
-// const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-
-// Option 3: Use auto-detection (fallback to best available)
-// const MODEL_NAME = process.env.GEMINI_MODEL || "auto";
-
 console.log(`🤖 Using Gemini model: ${MODEL_NAME}`);
 
-// List of backup models if the primary fails
+// Backup models if primary fails
 const BACKUP_MODELS = [
   "gemini-2.5-flash",
   "gemini-2.0-flash",
-  "gemini-flash-latest",
-  "gemini-1.5-flash"
+  "gemini-flash-latest"
 ];
 
 let model;
@@ -68,13 +57,13 @@ async function initializeModel() {
       model: currentModelName,
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 1000,
+        maxOutputTokens: 8192, // Maximum for long responses
         topK: 40,
         topP: 0.95,
       }
     });
     
-    // Test the model with a simple request
+    // Test the model
     const testResult = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: "Say hello" }] }]
     });
@@ -95,7 +84,7 @@ async function initializeModel() {
           model: backup,
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 1000,
+            maxOutputTokens: 8192,
           }
         });
         
@@ -155,7 +144,9 @@ function getUser(id) {
     db.users[userId] = {
       premium: false,
       requests: 0,
-      chatHistory: []
+      chatHistory: [],
+      totalMessages: 0,
+      joinedDate: new Date().toISOString()
     };
     saveDB();
   }
@@ -240,7 +231,7 @@ bot.onText(/\/buy/, async (msg) => {
 
     await bot.sendMessage(
       chatId, 
-      `💳 **Pay here to unlock premium access:**\n${session.url}\n\n🔒 Only $5 for unlimited access!`,
+      `💳 **Pay here to unlock premium access:**\n${session.url}\n\n🔒 Only $5 for unlimited access!\n\n✨ **Premium Features:**\n• Unlimited messages\n• Longer responses (8192 tokens)\n• Priority support\n• Advanced AI model: ${currentModelName}`,
       { parse_mode: "Markdown" }
     );
   } catch (error) {
@@ -266,7 +257,8 @@ app.get("/success", async (req, res) => {
           
           await bot.sendMessage(
             userId, 
-            "🎉 **Payment successful!** \n\nYou now have premium access. Enjoy unlimited AI chat! 🚀",
+            "🎉 **Payment successful!** \n\nYou now have premium access. Enjoy unlimited AI chat! 🚀\n\n" +
+            `✨ You're now using ${currentModelName} with full features.`,
             { parse_mode: "Markdown" }
           );
         }
@@ -282,14 +274,20 @@ app.get("/success", async (req, res) => {
     <head>
       <title>Payment Successful</title>
       <style>
-        body { font-family: Arial; text-align: center; padding: 50px; }
-        .success { color: #4CAF50; font-size: 48px; }
+        body { font-family: Arial; text-align: center; padding: 50px; background: #0a0a0a; color: white; }
+        .success { color: #4CAF50; font-size: 64px; }
+        .card { background: #1a1a1a; padding: 40px; border-radius: 20px; max-width: 500px; margin: 0 auto; }
+        h1 { color: #4CAF50; }
+        p { color: #aaa; }
       </style>
     </head>
     <body>
-      <div class="success">✅</div>
-      <h1>Payment Successful!</h1>
-      <p>You can now close this window and return to Telegram.</p>
+      <div class="card">
+        <div class="success">✅</div>
+        <h1>Payment Successful!</h1>
+        <p>You can now close this window and return to Telegram.</p>
+        <p style="font-size: 14px; margin-top: 20px;">🎉 Welcome to Premium!</p>
+      </div>
     </body>
     </html>
   `);
@@ -302,20 +300,107 @@ app.get("/cancel", (req, res) => {
     <head>
       <title>Payment Cancelled</title>
       <style>
-        body { font-family: Arial; text-align: center; padding: 50px; }
-        .cancel { color: #f44336; font-size: 48px; }
+        body { font-family: Arial; text-align: center; padding: 50px; background: #0a0a0a; color: white; }
+        .cancel { color: #f44336; font-size: 64px; }
+        .card { background: #1a1a1a; padding: 40px; border-radius: 20px; max-width: 500px; margin: 0 auto; }
+        h1 { color: #f44336; }
+        p { color: #aaa; }
       </style>
     </head>
     <body>
-      <div class="cancel">❌</div>
-      <h1>Payment Cancelled</h1>
-      <p>You can try again anytime using /buy in Telegram.</p>
+      <div class="card">
+        <div class="cancel">❌</div>
+        <h1>Payment Cancelled</h1>
+        <p>You can try again anytime using /buy in Telegram.</p>
+      </div>
     </body>
     </html>
   `);
 });
 
-// ================= AI CHAT WITH GEMINI =================
+// ================= SEND LONG RESPONSE HELPER =================
+async function sendLongMessage(chatId, text, options = {}) {
+  const MAX_LENGTH = 4096;
+  
+  if (text.length <= MAX_LENGTH) {
+    return await bot.sendMessage(chatId, text, options);
+  }
+  
+  // Split into chunks
+  const chunks = [];
+  let currentChunk = "";
+  
+  // Try to split by paragraphs first
+  const paragraphs = text.split(/\n\n/);
+  
+  for (const paragraph of paragraphs) {
+    if ((currentChunk + paragraph).length <= MAX_LENGTH) {
+      currentChunk += (currentChunk ? "\n\n" : "") + paragraph;
+    } else {
+      if (currentChunk) {
+        chunks.push(currentChunk);
+      }
+      // If a single paragraph is too long, split by sentences
+      if (paragraph.length > MAX_LENGTH) {
+        const sentences = paragraph.split(/(?<=[.!?])\s+/);
+        currentChunk = "";
+        for (const sentence of sentences) {
+          if ((currentChunk + sentence).length <= MAX_LENGTH) {
+            currentChunk += (currentChunk ? " " : "") + sentence;
+          } else {
+            if (currentChunk) {
+              chunks.push(currentChunk);
+            }
+            currentChunk = sentence;
+          }
+        }
+      } else {
+        currentChunk = paragraph;
+      }
+    }
+  }
+  
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+  
+  // Send chunks
+  const messages = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const isFirst = i === 0;
+    const isLast = i === chunks.length - 1;
+    
+    let prefix = "";
+    if (chunks.length > 1 && isFirst) {
+      prefix = `📝 **Part ${i+1}/${chunks.length}**\n\n`;
+    } else if (chunks.length > 1) {
+      prefix = `📝 **Part ${i+1}/${chunks.length}**\n\n`;
+    }
+    
+    const messageText = prefix + chunk;
+    const sent = await bot.sendMessage(chatId, messageText, options);
+    messages.push(sent);
+    
+    // Small delay between chunks
+    if (i < chunks.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+  
+  // Send completion notice for long messages
+  if (chunks.length > 1) {
+    await bot.sendMessage(
+      chatId,
+      `✅ **Full response sent (${chunks.length} parts)**\n\n💬 Total: ${text.length} characters`,
+      { parse_mode: "Markdown" }
+    );
+  }
+  
+  return messages;
+}
+
+// ================= AI CHAT WITH FULL RESPONSES =================
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -326,64 +411,87 @@ bot.on("message", async (msg) => {
     const user = getUser(userId);
 
     user.requests = (user.requests || 0) + 1;
+    user.totalMessages = (user.totalMessages || 0) + 1;
 
-    if (!user.premium && user.requests > 10) {
+    // Check premium status and limits
+    const isPremium = user.premium;
+    const maxFreeMessages = 10;
+    
+    if (!isPremium && user.requests > maxFreeMessages) {
       await bot.sendMessage(
         chatId,
         "🚫 **Free limit reached!**\n\n" +
         "You've used all 10 free messages.\n" +
         "Use /buy to unlock premium access for only $5! 💰\n\n" +
-        "✨ Premium benefits:\n" +
+        "✨ **Premium Benefits:**\n" +
         "• Unlimited messages\n" +
-        "• Priority response\n" +
-        `• Access to ${currentModelName}`,
+        "• Longer responses (8192 tokens)\n" +
+        "• Priority support\n" +
+        `• Advanced AI: ${currentModelName}`,
         { parse_mode: "Markdown" }
       );
       return;
     }
 
+    // Show typing indicator
     await bot.sendChatAction(chatId, "typing");
 
+    // Store user message
     user.chatHistory = user.chatHistory || [];
     user.chatHistory.push({ role: "user", text: msg.text });
 
-    if (user.chatHistory.length > 20) {
-      user.chatHistory = user.chatHistory.slice(-20);
+    // Keep history manageable (last 30 messages for better context)
+    const maxHistory = isPremium ? 50 : 20;
+    if (user.chatHistory.length > maxHistory) {
+      user.chatHistory = user.chatHistory.slice(-maxHistory);
     }
 
     // Build conversation context
     let conversationContext = "";
     for (const entry of user.chatHistory) {
-      conversationContext += `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}\n`;
+      const role = entry.role === 'user' ? 'User' : 'Assistant';
+      conversationContext += `${role}: ${entry.text}\n`;
     }
 
     console.log(`🤖 Sending to Gemini (${currentModelName}) for user ${userId}`);
+    console.log(`📊 User stats: Premium: ${isPremium}, Messages: ${user.totalMessages}`);
 
-    // Gemini API call
+    // Prepare the prompt
+    const systemPrompt = `You are a professional AI assistant. Provide comprehensive, detailed, and well-structured responses. 
+    Be helpful, accurate, and thorough in your answers. If the user asks for code, provide complete working examples.
+    If the user asks for explanations, break them down clearly.
+    
+    Conversation history:
+    ${conversationContext}
+    
+    Assistant: Please provide a complete and thorough response to the user's latest message.`;
+
+    // Gemini API call with appropriate token limits
+    const maxTokens = isPremium ? 8192 : 4096;
+    
     const result = await model.generateContent({
       contents: [
         {
           role: "user",
-          parts: [{ 
-            text: `You are a smart AI assistant. Here is the conversation history:\n${conversationContext}\nAssistant: Please respond to the latest message.` 
-          }]
+          parts: [{ text: systemPrompt }]
         }
-      ]
+      ],
+      generationConfig: {
+        maxOutputTokens: maxTokens,
+        temperature: isPremium ? 0.8 : 0.7,
+        topK: 40,
+        topP: 0.95,
+      }
     });
 
-    const answer = result.response.text();
+    const fullAnswer = result.response.text();
 
-    user.chatHistory.push({ role: "assistant", text: answer });
+    // Store assistant response (full version)
+    user.chatHistory.push({ role: "assistant", text: fullAnswer });
     saveDB();
 
-    if (answer.length > 4096) {
-      for (let i = 0; i < answer.length; i += 4096) {
-        const chunk = answer.substring(i, i + 4096);
-        await bot.sendMessage(chatId, chunk);
-      }
-    } else {
-      await bot.sendMessage(chatId, answer);
-    }
+    // Send the full response
+    await sendLongMessage(chatId, fullAnswer, { parse_mode: "Markdown" });
 
   } catch (error) {
     console.error("❌ Gemini AI error:", {
@@ -395,15 +503,16 @@ bot.on("message", async (msg) => {
     let errorMessage = "⚠️ Sorry, I'm having trouble processing your request. Please try again.";
     
     if (error.message.includes("API key")) {
-      errorMessage = "⚠️ Gemini API key is invalid. Please contact the bot administrator.";
+      errorMessage = "⚠️ API key is invalid. Please contact the bot administrator.";
     } else if (error.message.includes("quota") || error.message.includes("limit")) {
       errorMessage = "⚠️ Free tier limit reached. Try again later or use /buy to upgrade.";
     } else if (error.message.includes("safety")) {
       errorMessage = "⚠️ I can't respond to that due to safety guidelines.";
     } else if (error.message.includes("not found") || error.message.includes("404")) {
-      errorMessage = `⚠️ Model ${currentModelName} not available. Using backup model.`;
-      // Try to reinitialize with backup
+      errorMessage = `⚠️ Model ${currentModelName} not available. Trying backup...`;
       await initializeModel();
+    } else if (error.message.includes("timeout")) {
+      errorMessage = "⚠️ Request timed out. Please try with a shorter message.";
     }
     
     await bot.sendMessage(chatId, errorMessage);
@@ -417,19 +526,52 @@ bot.onText(/\/start/, async (msg) => {
   
   const user = getUser(userId);
   const status = user.premium ? "✅ Premium" : "🆓 Free";
+  const modelInfo = user.premium ? `${currentModelName} (Full)` : `${currentModelName} (Limited)`;
   
   await bot.sendMessage(
     chatId,
-    "🤖 **Welcome to AI Assistant!**\n\n" +
-    `Your status: ${status}\n` +
-    `Messages used: ${user.requests || 0}/10 (free users)\n` +
-    `AI Model: ${currentModelName}\n\n` +
-    "**Commands:**\n" +
+    "🤖 **Welcome to Professional AI Assistant!**\n\n" +
+    `📊 **Your Status:** ${status}\n` +
+    `📝 **Messages Used:** ${user.requests || 0}/${user.premium ? '∞' : '10'}\n` +
+    `🤖 **AI Model:** ${modelInfo}\n` +
+    `📅 **Joined:** ${new Date(user.joinedDate).toLocaleDateString()}\n\n` +
+    "**✨ Features:**\n" +
+    "• Full-length responses (up to 8192 tokens)\n" +
+    "• Conversation memory\n" +
+    "• Code generation\n" +
+    "• Professional assistance\n\n" +
+    "**📌 Commands:**\n" +
     "/buy - Get premium access ($5)\n" +
-    "/status - Check your account status\n" +
-    "/reset - Reset your chat history\n" +
-    "/model - Show current AI model\n\n" +
+    "/status - Check account details\n" +
+    "/reset - Clear conversation history\n" +
+    "/model - Show current AI model\n" +
+    "/help - Show this message again\n\n" +
     "Just send me any message to start chatting! 💬",
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.onText(/\/help/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  await bot.sendMessage(
+    chatId,
+    "📖 **Help & Commands**\n\n" +
+    "**Basic Commands:**\n" +
+    "/start - Initialize the bot\n" +
+    "/status - Check your account\n" +
+    "/reset - Clear chat history\n" +
+    "/model - Show AI model info\n" +
+    "/help - Show this menu\n\n" +
+    "**Premium Commands:**\n" +
+    "/buy - Upgrade to premium ($5)\n\n" +
+    "**Tips:**\n" +
+    "• Free users get 10 messages\n" +
+    "• Premium users get unlimited access\n" +
+    "• Responses can be very long (8192 tokens)\n" +
+    "• Conversation history is saved\n" +
+    "• You can ask for code, explanations, and more\n\n" +
+    `🤖 **Current Model:** ${currentModelName}`,
     { parse_mode: "Markdown" }
   );
 });
@@ -439,14 +581,18 @@ bot.onText(/\/status/, async (msg) => {
   const userId = String(msg.from.id);
   
   const user = getUser(userId);
+  const daysSinceJoin = Math.floor((Date.now() - new Date(user.joinedDate).getTime()) / (1000 * 60 * 60 * 24));
   
   await bot.sendMessage(
     chatId,
     "📊 **Your Account Status**\n\n" +
-    `Plan: ${user.premium ? "✅ Premium (Unlimited)" : "🆓 Free (10 messages)"}\n` +
-    `Messages used: ${user.requests || 0}/10\n` +
-    `Chat history: ${(user.chatHistory || []).length} messages\n` +
-    `AI Model: ${currentModelName}\n\n` +
+    `👤 **User ID:** ${userId}\n` +
+    `💎 **Plan:** ${user.premium ? "✅ Premium (Unlimited)" : "🆓 Free (10 messages)"}\n` +
+    `📝 **Messages Used:** ${user.requests || 0}/${user.premium ? '∞' : '10'}\n` +
+    `💬 **Total Messages:** ${user.totalMessages || 0}\n` +
+    `📅 **Member For:** ${daysSinceJoin} days\n` +
+    `🤖 **AI Model:** ${currentModelName}\n` +
+    `⚡ **Response Limit:** ${user.premium ? '8192 tokens' : '4096 tokens'}\n\n` +
     (user.premium ? "🎉 Enjoy unlimited access!" : "💳 Use /buy to upgrade to premium!"),
     { parse_mode: "Markdown" }
   );
@@ -454,16 +600,22 @@ bot.onText(/\/status/, async (msg) => {
 
 bot.onText(/\/model/, async (msg) => {
   const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
+  const user = getUser(userId);
   
   await bot.sendMessage(
     chatId,
-    `🤖 **Current AI Model**\n\n` +
-    `Model: ${currentModelName}\n` +
-    `Provider: Google Gemini\n` +
-    `Tier: ${currentModelName.includes('pro') ? 'Pro' : 'Flash'}\n` +
-    `Best Available: ✅ gemini-3.5-flash\n\n` +
-    `To change model, set GEMINI_MODEL in environment variables.\n` +
-    `Available: gemini-3.5-flash, gemini-2.5-flash, gemini-2.0-flash`,
+    `🤖 **AI Model Information**\n\n` +
+    `📦 **Current Model:** ${currentModelName}\n` +
+    `🏢 **Provider:** Google Gemini\n` +
+    `📊 **Type:** ${currentModelName.includes('pro') ? 'Pro' : 'Flash'}\n` +
+    `🔢 **Token Limit:** ${user.premium ? '8192' : '4096'}\n` +
+    `💡 **Status:** ${user.premium ? 'Full Access ✅' : 'Limited ⚠️'}\n\n` +
+    `**Available Models:**\n` +
+    `• gemini-3.5-flash (Best)\n` +
+    `• gemini-2.5-flash\n` +
+    `• gemini-2.0-flash\n\n` +
+    `💳 Premium users get full 8192 token responses!`,
     { parse_mode: "Markdown" }
   );
 });
@@ -479,7 +631,8 @@ bot.onText(/\/reset/, async (msg) => {
   
   await bot.sendMessage(
     chatId,
-    "🔄 **Chat history reset!**\n\nStarting fresh conversation.",
+    "🔄 **Chat history reset!**\n\n" +
+    "Starting fresh conversation. Your previous messages are cleared.",
     { parse_mode: "Markdown" }
   );
 });
@@ -502,7 +655,12 @@ app.get("/test-gemini", async (req, res) => {
       response: result.response.text(),
       model: currentModelName,
       apiVersion: "v1beta",
-      note: "Using gemini-3.5-flash (best available)"
+      status: "✅ Working perfectly",
+      features: {
+        maxTokens: 8192,
+        temperature: 0.7,
+        supportsLongResponses: true
+      }
     });
   } catch (error) {
     res.status(500).json({
@@ -524,7 +682,6 @@ app.get("/list-models", async (req, res) => {
       supportedMethods: m.supportedGenerationMethods || []
     }));
     
-    // Filter to only chat models
     const chatModels = modelNames.filter(m => 
       m.name.includes('gemini') && 
       !m.name.includes('embedding') &&
@@ -532,24 +689,22 @@ app.get("/list-models", async (req, res) => {
       m.supportedMethods.includes('generateContent')
     );
     
-    // Get top models
-    const topModels = chatModels.filter(m => 
-      m.name.includes('flash') || m.name.includes('pro')
-    );
-    
     res.json({
       success: true,
-      available_models: topModels.map(m => m.name),
+      available_models: chatModels.map(m => m.name),
       current_model: currentModelName,
       total_models: models.models.length,
       recommendation: "gemini-3.5-flash (best overall)",
-      note: "Use GEMINI_MODEL environment variable to change model"
+      free_tier: {
+        messages_per_day: "~1500",
+        token_limit: "8192",
+        models: ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
+      }
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message,
-      suggestion: "Make sure your API key is valid"
+      error: error.message
     });
   }
 });
@@ -604,7 +759,13 @@ app.get("/", (req, res) => {
     version: "7.0.0",
     timestamp: new Date().toISOString(),
     model: currentModelName,
-    modelSource: process.env.GEMINI_MODEL ? "Environment Variable" : "Default (gemini-3.5-flash)",
+    modelSource: process.env.GEMINI_MODEL ? "Environment Variable" : "Default",
+    features: {
+      maxTokens: 8192,
+      supportsLongResponses: true,
+      autoChunking: true,
+      premiumTier: true
+    },
     apiVersion: "v1beta",
     webhook: `${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`,
     endpoints: {
@@ -628,7 +789,12 @@ app.get("/health", (req, res) => {
     dbUsers: Object.keys(db.users).length,
     timestamp: new Date().toISOString(),
     ai_provider: "Google Gemini",
-    model: currentModelName
+    model: currentModelName,
+    features: {
+      maxTokens: 8192,
+      chunking: "auto",
+      premium: true
+    }
   });
 });
 
@@ -638,6 +804,7 @@ app.listen(PORT, async () => {
   console.log(`📡 Webhook URL: ${process.env.WEBHOOK_URL}${WEBHOOK_PATH}`);
   console.log(`🤖 AI Provider: Google Gemini`);
   console.log(`📦 Model: ${currentModelName}`);
+  console.log(`📋 Features: Full Responses (8192 tokens)`);
   console.log(`📋 Test Gemini: https://just-ask-su2i.onrender.com/test-gemini`);
   console.log(`📋 List Models: https://just-ask-su2i.onrender.com/list-models`);
   
@@ -645,6 +812,7 @@ app.listen(PORT, async () => {
   
   console.log(`✅ Bot is ready!`);
   console.log(`👥 Users in DB: ${Object.keys(db.users).length}`);
+  console.log(`📝 Long response support: Enabled`);
 });
 
 process.on('uncaughtException', (error) => {
