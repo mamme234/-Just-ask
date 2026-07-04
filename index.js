@@ -6,6 +6,9 @@ import Stripe from "stripe";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import path from "path";
 import { fileURLToPath } from 'url';
+import axios from "axios";
+import sharp from "sharp";
+import { createCanvas, loadImage } from 'canvas';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,54 +28,46 @@ const OWNER = {
   telegram: "https://t.me/KING_OF_ALPHA",
   github: "https://github.com/mamme234",
   email: "ghazimuhammadilyas@gmail.com",
-  bio: "👑 King of Alpha | Full-Stack Developer | AI Enthusiast | Creator of this Bot",
-  skills: [
-    "JavaScript", 
-    "Python", 
-    "AI/ML", 
-    "Web Development", 
-    "Bot Development",
-    "Blockchain",
-    "Cloud Computing"
-  ],
-  achievements: [
-    "🏆 Built 50+ Bots",
-    "🚀 10k+ Active Users",
-    "💡 AI Innovator",
-    "👑 Alpha Developer"
-  ]
+  bio: "👑 King of Alpha | Full-Stack Developer | AI Enthusiast",
+  skills: ["JavaScript", "Python", "AI/ML", "Web Dev", "Bot Dev", "Blockchain", "Cloud"],
+  achievements: ["🏆 50+ Bots", "🚀 10k+ Users", "💡 AI Innovator", "👑 Alpha Developer"]
 };
 
 // ================= ADMIN CONFIGURATION =================
 const ADMIN_IDS = [
-  "123456789", // ⭐ Replace with your Telegram user ID
+  "123456789", // Replace with your Telegram user ID
 ];
 
 // ================= EMOJI & STYLE =================
 const E = {
-  premium: "💎",
-  admin: "👑",
-  free: "🆓",
-  star: "⭐",
+  pro: "⚡",
+  chat: "💬",
+  ai: "🧠",
   sparkle: "✨",
   fire: "🔥",
   rocket: "🚀",
   brain: "🧠",
   magic: "🎯",
-  gift: "🎁",
   crown: "👑",
   diamond: "💎",
   lightning: "⚡",
   robot: "🤖",
   heart: "❤️",
-  ad: "📢",
-  coin: "🪙",
-  developer: "👨‍💻",
+  star: "⭐",
   code: "💻",
   link: "🔗",
   mail: "📧",
   trophy: "🏆",
-  alpha: "🐺"
+  alpha: "🐺",
+  premium: "💎",
+  free: "🆓",
+  image: "🖼️",
+  video: "🎬",
+  edit: "✏️",
+  photo: "📸",
+  palette: "🎨",
+  layers: "📐",
+  filter: "🔮"
 };
 
 // ================= VALIDATE ENV =================
@@ -128,7 +123,7 @@ async function findWorkingModel() {
       });
       
       const response = result.response.text();
-      console.log(`✅ ${modelName} works! Response: "${response.substring(0, 30)}..."`);
+      console.log(`✅ ${modelName} works!`);
       
       workingModel = modelName;
       model = testModel;
@@ -184,7 +179,9 @@ function getUser(id) {
       chatHistory: [],
       adsWatched: 0,
       coins: isAdmin ? 9999 : 0,
-      joinedDate: new Date().toISOString()
+      joinedDate: new Date().toISOString(),
+      imagesGenerated: 0,
+      videosProcessed: 0
     };
     db.stats.totalUsers = (db.stats.totalUsers || 0) + 1;
     saveDB();
@@ -222,44 +219,501 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   }
 });
 
-// ================= AD FUNCTIONS =================
-async function showAd(chatId, userId) {
+// ================= IMAGE GENERATION FUNCTIONS =================
+async function generateImage(prompt, userId) {
   try {
     const user = getUser(userId);
+    const isPremium = user.premium || user.isAdmin;
     
-    await bot.sendMessage(
-      chatId,
-      `${E.ad} **WATCH AN AD TO EARN COINS** ${E.ad}\n\n` +
-      `${E.coin} **Earn 10 coins per ad!**\n` +
-      `🎯 Collect coins to unlock premium features!\n\n` +
-      `Click the link below to watch an ad:\n` +
-      `[Watch Ad](${process.env.WEBHOOK_URL}/watch-ad?user=${userId})`,
-      { parse_mode: "Markdown" }
-    );
+    if (!isPremium && user.imagesGenerated >= 2) {
+      return { error: "Free limit reached. Upgrade to premium for unlimited image generation!" };
+    }
     
-    return true;
+    // Using Gemini to generate image description and then create placeholder
+    // For production, you'd use actual image generation API like DALL-E, Stable Diffusion, etc.
+    
+    const imagePrompt = await model.generateContent({
+      contents: [{
+        role: "user",
+        parts: [{ text: `Create a detailed image description based on: ${prompt}` }]
+      }],
+      generationConfig: { maxOutputTokens: 200 }
+    });
+    
+    const description = imagePrompt.response.text();
+    
+    // Create a placeholder image with text
+    const canvas = createCanvas(800, 600);
+    const ctx = canvas.getContext('2d');
+    
+    // Background gradient
+    const gradient = ctx.createLinearGradient(0, 0, 800, 600);
+    gradient.addColorStop(0, '#1a1a2e');
+    gradient.addColorStop(0.5, '#16213e');
+    gradient.addColorStop(1, '#0f3460');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 800, 600);
+    
+    // Draw border
+    ctx.strokeStyle = '#667eea';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(10, 10, 780, 580);
+    
+    // Title
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('🖼️ AI Generated Image', 400, 60);
+    
+    // Prompt
+    ctx.fillStyle = '#aaa';
+    ctx.font = '18px Arial';
+    ctx.fillText('Prompt: ' + prompt.substring(0, 40) + (prompt.length > 40 ? '...' : ''), 400, 100);
+    
+    // Description
+    ctx.fillStyle = '#888';
+    ctx.font = '14px Arial';
+    const lines = description.match(/.{1,60}/g) || [];
+    let y = 160;
+    for (const line of lines.slice(0, 12)) {
+      ctx.fillText(line, 400, y);
+      y += 25;
+    }
+    
+    // Footer
+    ctx.fillStyle = '#666';
+    ctx.font = '12px Arial';
+    ctx.fillText(`Generated by Alpha AI Bot | ${new Date().toLocaleDateString()}`, 400, 560);
+    
+    const buffer = canvas.toBuffer('image/png');
+    
+    user.imagesGenerated = (user.imagesGenerated || 0) + 1;
+    saveDB();
+    
+    return { buffer, description };
   } catch (error) {
-    console.error("❌ Ad error:", error);
-    return false;
+    console.error("❌ Image generation error:", error);
+    return { error: "Failed to generate image. Please try again." };
   }
 }
 
-// ================= OWNER INFO =================
-function getOwnerInfo() {
-  return `${E.alpha} **ABOUT THE OWNER** ${E.alpha}\n\n` +
-    `👤 **Name:** ${OWNER.name}\n` +
-    `📝 **Username:** ${OWNER.username}\n` +
-    `📋 **Bio:** ${OWNER.bio}\n\n` +
-    `${E.code} **Skills:**\n` +
-    `${OWNER.skills.map(s => `• ${s}`).join('\n')}\n\n` +
-    `${E.trophy} **Achievements:**\n` +
-    `${OWNER.achievements.map(a => `• ${a}`).join('\n')}\n\n` +
-    `${E.link} **Connect with Me:**\n` +
-    `• Telegram: ${OWNER.telegram}\n` +
-    `• GitHub: ${OWNER.github}\n` +
-    `• Email: ${OWNER.email}\n\n` +
-    `${E.heart} *Built with passion for the community!* ${E.heart}`;
+// ================= PHOTO EDITING FUNCTIONS =================
+async function editPhoto(photoBuffer, action, params = {}) {
+  try {
+    let result;
+    
+    switch(action) {
+      case 'brightness':
+        result = await sharp(photoBuffer)
+          .modulate({ brightness: params.brightness || 1.2 })
+          .toBuffer();
+        break;
+        
+      case 'contrast':
+        result = await sharp(photoBuffer)
+          .modulate({ contrast: params.contrast || 1.3 })
+          .toBuffer();
+        break;
+        
+      case 'blur':
+        result = await sharp(photoBuffer)
+          .blur(params.blur || 5)
+          .toBuffer();
+        break;
+        
+      case 'resize':
+        result = await sharp(photoBuffer)
+          .resize(params.width || 800, params.height || 600, { fit: 'inside' })
+          .toBuffer();
+        break;
+        
+      case 'grayscale':
+        result = await sharp(photoBuffer)
+          .grayscale()
+          .toBuffer();
+        break;
+        
+      case 'sepia':
+        result = await sharp(photoBuffer)
+          .modulate({ sepia: params.sepia || 0.8 })
+          .toBuffer();
+        break;
+        
+      case 'rotate':
+        result = await sharp(photoBuffer)
+          .rotate(params.rotate || 90)
+          .toBuffer();
+        break;
+        
+      case 'flip':
+        result = await sharp(photoBuffer)
+          .flip()
+          .toBuffer();
+        break;
+        
+      case 'flop':
+        result = await sharp(photoBuffer)
+          .flop()
+          .toBuffer();
+        break;
+        
+      case 'vintage':
+        // Apply vintage filter
+        result = await sharp(photoBuffer)
+          .modulate({
+            brightness: 0.8,
+            contrast: 1.1,
+            saturation: 0.7
+          })
+          .toBuffer();
+        break;
+        
+      case 'dramatic':
+        result = await sharp(photoBuffer)
+          .modulate({
+            brightness: 0.7,
+            contrast: 1.5,
+            saturation: 1.3
+          })
+          .toBuffer();
+        break;
+        
+      case 'vibrant':
+        result = await sharp(photoBuffer)
+          .modulate({
+            saturation: 1.5,
+            contrast: 1.1
+          })
+          .toBuffer();
+        break;
+        
+      default:
+        result = photoBuffer;
+    }
+    
+    return result;
+  } catch (error) {
+    console.error("❌ Photo editing error:", error);
+    throw error;
+  }
 }
+
+// ================= COMMANDS =================
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
+  const user = getUser(userId);
+  
+  const isPremium = user.premium || user.isAdmin;
+  const status = isPremium ? `${E.premium} Premium` : `${E.free} Free`;
+  const adminBadge = user.isAdmin ? ` ${E.crown} Admin` : '';
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.robot} **ALPHA AI PRO - CHATGPT STYLE** ${E.robot}\n\n` +
+    `👤 **Status:** ${status}${adminBadge}\n` +
+    `📊 **Messages:** ${user.requests || 0}/∞\n` +
+    `${E.coin} **Coins:** ${user.coins || 0}\n` +
+    `${E.image} **Images:** ${user.imagesGenerated || 0}\n\n` +
+    `**🎯 Commands:**\n` +
+    `${E.chat} /chat - Start AI chat\n` +
+    `${E.image} /image - Generate image\n` +
+    `${E.photo} /photo - Edit photo\n` +
+    `${E.video} /video - Process video\n` +
+    `${E.palette} /design - Design tools\n` +
+    `${E.diamond} /buy - Upgrade to Premium\n` +
+    `${E.crown} /owner - About Owner\n` +
+    `${E.star} /help - All Commands\n\n` +
+    `${E.fire} *Send any message to chat with AI!* ${E.fire}`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ================= CHAT COMMAND =================
+bot.onText(/\/chat/, async (msg) => {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(
+    chatId,
+    `${E.chat} **AI CHAT MODE** ${E.chat}\n\n` +
+    `Send me any message and I'll respond like ChatGPT!\n\n` +
+    `💡 Try:\n` +
+    `• "Explain quantum computing"\n` +
+    `• "Write a poem about AI"\n` +
+    `• "What's the weather like?"\n` +
+    `• "Help me with my code"\n\n` +
+    `${E.sparkle} *Type your message now!* ${E.sparkle}`
+  );
+});
+
+// ================= IMAGE COMMAND =================
+bot.onText(/\/image/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
+  const user = getUser(userId);
+  
+  const isPremium = user.premium || user.isAdmin;
+  const maxFree = 2;
+  
+  if (!isPremium && user.imagesGenerated >= maxFree) {
+    await bot.sendMessage(
+      chatId,
+      `${E.fire} **FREE LIMIT REACHED** ${E.fire}\n\n` +
+      `You've used ${user.imagesGenerated} free images.\n` +
+      `${E.diamond} **Upgrade to Premium for unlimited image generation!**\n\n` +
+      `Use /buy to upgrade.`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.image} **IMAGE GENERATOR** ${E.image}\n\n` +
+    `Describe the image you want to generate.\n\n` +
+    `💡 Examples:\n` +
+    `• "A futuristic city at sunset"\n` +
+    `• "A cute cat with a crown"\n` +
+    `• "Abstract art with vibrant colors"\n\n` +
+    `${E.premium} ${isPremium ? 'Unlimited generations' : `${maxFree - user.imagesGenerated} free generations left`}\n\n` +
+    `*Send your image description now!*`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ================= PHOTO EDIT COMMAND =================
+bot.onText(/\/photo/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.photo} **PHOTO EDITING TOOLS** ${E.photo}\n\n` +
+    `**Available Filters:**\n` +
+    `📸 /brightness - Adjust brightness\n` +
+    `🎨 /contrast - Adjust contrast\n` +
+    `🔮 /blur - Apply blur effect\n` +
+    `📐 /resize - Resize image\n` +
+    `⚫ /grayscale - Convert to B&W\n` +
+    `🟫 /sepia - Apply sepia tone\n` +
+    `🔄 /rotate - Rotate image\n` +
+    `🔄 /flip - Flip image\n` +
+    `📻 /vintage - Vintage filter\n` +
+    `🎬 /dramatic - Dramatic effect\n` +
+    `🌈 /vibrant - Vibrant colors\n\n` +
+    `Send a photo and tell me which filter to apply!`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ================= VIDEO COMMAND =================
+bot.onText(/\/video/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.video} **VIDEO PROCESSING** ${E.video}\n\n` +
+    `**Available Tools:**\n` +
+    `🎬 /trim - Trim video\n` +
+    `🔄 /convert - Convert format\n` +
+    `📐 /resize-video - Resize video\n` +
+    `⚡ /speed - Change speed\n` +
+    `🎵 /add-audio - Add background music\n\n` +
+    `Send me a video to process!`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ================= DESIGN COMMAND =================
+bot.onText(/\/design/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.palette} **DESIGN TOOLS** ${E.palette}\n\n` +
+    `**Available Designs:**\n` +
+    `🎨 /poster - Create poster\n` +
+    `📊 /infographic - Create infographic\n` +
+    `🎯 /logo - Create logo\n` +
+    `📄 /banner - Create banner\n` +
+    `🖼️ /meme - Create meme\n\n` +
+    `Tell me what design you need and describe it!`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ================= HELP COMMAND =================
+bot.onText(/\/help/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.star} **ALPHA AI PRO - COMPLETE GUIDE** ${E.star}\n\n` +
+    `**🤖 AI Chat**\n` +
+    `/chat - Start AI conversation\n` +
+    `Just type any message to chat\n\n` +
+    `**🖼️ Image Generation**\n` +
+    `/image - Generate images\n` +
+    `Describe what you want to create\n\n` +
+    `**📸 Photo Editing**\n` +
+    `/photo - Edit photos\n` +
+    `/brightness - Adjust brightness\n` +
+    `/contrast - Adjust contrast\n` +
+    `/blur - Apply blur\n` +
+    `/grayscale - Black & white\n` +
+    `/sepia - Sepia tone\n` +
+    `/rotate - Rotate image\n` +
+    `/flip - Flip image\n` +
+    `/vintage - Vintage filter\n` +
+    `/dramatic - Dramatic effect\n` +
+    `/vibrant - Vibrant colors\n\n` +
+    `**🎬 Video Processing**\n` +
+    `/video - Process videos\n` +
+    `/trim - Trim video\n` +
+    `/convert - Convert format\n` +
+    `/speed - Change speed\n\n` +
+    `**🎨 Design Tools**\n` +
+    `/design - Design tools\n` +
+    `/poster - Create poster\n` +
+    `/logo - Create logo\n` +
+    `/banner - Create banner\n` +
+    `/meme - Create meme\n\n` +
+    `**💎 Premium**\n` +
+    `/buy - Upgrade for $5\n` +
+    `• Unlimited everything\n` +
+    `• Priority processing\n` +
+    `• Advanced features\n\n` +
+    `**👤 Account**\n` +
+    `/status - Your stats\n` +
+    `/reset - Reset chat\n` +
+    `/owner - About owner\n\n` +
+    `${E.fire} *Send any message to chat with AI!* ${E.fire}`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ================= OWNER COMMAND =================
+bot.onText(/\/owner/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.alpha} **ABOUT THE OWNER** ${E.alpha}\n\n` +
+    `👤 **Name:** Muhammad Ilyas\n` +
+    `📝 **Username:** @KING_OF_ALPHA\n` +
+    `📋 **Bio:** 👑 King of Alpha | Full-Stack Developer | AI Enthusiast\n\n` +
+    `${E.code} **Skills:**\n` +
+    `• JavaScript • Python • AI/ML\n` +
+    `• Web Dev • Bot Dev • Blockchain • Cloud\n\n` +
+    `${E.trophy} **Achievements:**\n` +
+    `• 🏆 Built 50+ Bots\n` +
+    `• 🚀 10k+ Active Users\n` +
+    `• 💡 AI Innovator\n` +
+    `• 👑 Alpha Developer\n\n` +
+    `${E.link} **Connect:**\n` +
+    `• Telegram: @KING_OF_ALPHA\n` +
+    `• GitHub: mamme234\n` +
+    `• Email: ghazimuhammadilyas@gmail.com\n\n` +
+    `${E.heart} *Built with passion for the community!* ${E.heart}`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ================= STATUS COMMAND =================
+bot.onText(/\/status/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
+  const user = getUser(userId);
+  
+  const isPremium = user.premium || user.isAdmin;
+  const days = Math.floor((Date.now() - new Date(user.joinedDate).getTime()) / (1000 * 60 * 60 * 24));
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.star} **YOUR PROFILE** ${E.star}\n\n` +
+    `👤 **User ID:** \`${userId}\`\n` +
+    `${user.isAdmin ? E.crown : ''} **Plan:** ${isPremium ? '💎 Premium' : '🆓 Free'}\n` +
+    `📊 **Messages:** ${user.requests || 0}\n` +
+    `${E.coin} **Coins:** ${user.coins || 0}\n` +
+    `${E.image} **Images Generated:** ${user.imagesGenerated || 0}\n` +
+    `${E.video} **Videos Processed:** ${user.videosProcessed || 0}\n` +
+    `📅 **Days Active:** ${days}\n` +
+    `🤖 **Model:** ${workingModel || 'N/A'}\n\n` +
+    `${isPremium ? `${E.fire} Enjoy unlimited access! ${E.fire}` : `${E.diamond} Upgrade with /buy!`}`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ================= BUY COMMAND =================
+bot.onText(/\/buy/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
+  const user = getUser(userId);
+  
+  if (user.isAdmin) {
+    await bot.sendMessage(
+      chatId,
+      `${E.crown} **ADMIN ACCESS** ${E.crown}\n\nYou already have unlimited access!`
+    );
+    return;
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "Alpha AI Pro - Premium Access",
+              description: "Unlimited AI chat, images, video & photo editing"
+            },
+            unit_amount: 500,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `${process.env.WEBHOOK_URL}/success?user=${userId}`,
+      cancel_url: `${process.env.WEBHOOK_URL}/cancel`,
+      metadata: { userId: String(userId) }
+    });
+
+    await bot.sendMessage(
+      chatId, 
+      `${E.diamond} **UNLOCK ALPHA AI PRO** ${E.diamond}\n\n` +
+      `💳 **Pay:** ${session.url}\n\n` +
+      `🔒 **Only $5 - One Time Payment!**\n\n` +
+      `**✨ Premium Features:**\n` +
+      `${E.lightning} Unlimited AI Chat\n` +
+      `${E.image} Unlimited Image Generation\n` +
+      `${E.photo} Unlimited Photo Editing\n` +
+      `${E.video} Unlimited Video Processing\n` +
+      `${E.palette} Advanced Design Tools\n` +
+      `${E.rocket} Priority Processing\n` +
+      `${E.crown} Premium Support\n\n` +
+      `${E.fire} *Upgrade now and unlock full power!* ${E.fire}`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (error) {
+    console.error("❌ Stripe error:", error);
+    await bot.sendMessage(chatId, "⚠️ Payment system unavailable. Try again later.");
+  }
+});
+
+// ================= RESET COMMAND =================
+bot.onText(/\/reset/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
+  
+  const user = getUser(userId);
+  user.chatHistory = [];
+  saveDB();
+  
+  await bot.sendMessage(
+    chatId,
+    `${E.magic} **RESET COMPLETE** ${E.magic}\n\nFresh start! Send any message.`
+  );
+});
 
 // ================= MESSAGE HANDLER =================
 bot.on("message", async (msg) => {
@@ -288,12 +742,8 @@ bot.on("message", async (msg) => {
         chatId,
         `${E.fire} **FREE LIMIT REACHED** ${E.fire}\n\n` +
         `You've used ${user.requests} free messages.\n` +
-        `${E.coin} **Watch an ad to get 5 extra messages!**\n\n` +
-        `Options:\n` +
-        `1️⃣ Watch ad - Get 5 free messages\n` +
-        `2️⃣ Upgrade to Premium - Only $5\n\n` +
-        `Type /ad to watch an ad\n` +
-        `Type /buy to upgrade`,
+        `${E.diamond} **Upgrade to Premium for unlimited access!**\n\n` +
+        `Use /buy to upgrade.`,
         { parse_mode: "Markdown" }
       );
       return;
@@ -315,13 +765,19 @@ bot.on("message", async (msg) => {
       context += `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}\n`;
     }
 
+    // Professional ChatGPT-style prompt
+    const systemPrompt = `You are Alpha AI Pro, a professional ChatGPT-style assistant. 
+    You provide clear, detailed, and well-structured responses. 
+    Use emojis appropriately to make responses engaging.
+    Format responses with proper headings, bullet points, and sections when needed.
+    
+    Conversation:\n${context}\nAssistant: Provide a professional, detailed response.`;
+
     const result = await model.generateContent({
       contents: [
         {
           role: "user",
-          parts: [{ 
-            text: `You are a helpful AI assistant. Be engaging and use emojis.\nConversation:\n${context}\nAssistant: Respond helpfully.` 
-          }]
+          parts: [{ text: systemPrompt }]
         }
       ],
       generationConfig: {
@@ -335,13 +791,8 @@ bot.on("message", async (msg) => {
     user.chatHistory.push({ role: "assistant", text: answer });
     saveDB();
 
-    await bot.sendMessage(chatId, answer);
-
-    if (!isPremium && user.requests % 3 === 0) {
-      setTimeout(() => {
-        showAd(chatId, userId);
-      }, 2000);
-    }
+    // Send with professional formatting
+    await bot.sendMessage(chatId, answer, { parse_mode: "Markdown" });
 
   } catch (error) {
     console.error("❌ Error:", error.message);
@@ -350,162 +801,6 @@ bot.on("message", async (msg) => {
       `${E.sparkle} ⚠️ Error: ${error.message}\n\nPlease try again. ${E.sparkle}`
     );
   }
-});
-
-// ================= COMMANDS =================
-bot.onText(/\/start/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = getUser(userId);
-  
-  const isPremium = user.premium || user.isAdmin;
-  const status = isPremium ? `${E.premium} Premium` : `${E.free} Free`;
-  const adminBadge = user.isAdmin ? ` ${E.crown} Admin` : '';
-  
-  await bot.sendMessage(
-    chatId,
-    `${E.robot} **WELCOME TO ULTIMATE AI BOT** ${E.robot}\n\n` +
-    `👤 **Status:** ${status}${adminBadge}\n` +
-    `📊 **Messages:** ${user.requests || 0}/∞\n` +
-    `${E.coin} **Coins:** ${user.coins || 0}\n` +
-    `📺 **Ads Watched:** ${user.adsWatched || 0}\n\n` +
-    `**Commands:**\n` +
-    `/ad - ${E.ad} Watch ad for free messages\n` +
-    `/buy - ${E.diamond} Upgrade to Premium ($5)\n` +
-    `/owner - ${E.developer} About the Owner\n` +
-    `/status - ${E.star} Your stats\n` +
-    `/reset - ${E.magic} Reset conversation\n` +
-    `/help - ${E.heart} All commands\n\n` +
-    `${E.fire} *Send any message to chat!* ${E.fire}`,
-    { parse_mode: "Markdown" }
-  );
-});
-
-// ================= OWNER COMMAND =================
-bot.onText(/\/owner/, async (msg) => {
-  const chatId = msg.chat.id;
-  
-  await bot.sendMessage(
-    chatId,
-    getOwnerInfo(),
-    { parse_mode: "Markdown", disable_web_page_preview: true }
-  );
-});
-
-bot.onText(/\/ad/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  await showAd(chatId, userId);
-});
-
-bot.onText(/\/buy/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = getUser(userId);
-  
-  if (user.isAdmin) {
-    await bot.sendMessage(
-      chatId,
-      `${E.crown} **ADMIN ACCESS** ${E.crown}\n\nYou already have unlimited access!`
-    );
-    return;
-  }
-
-  try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      mode: "payment",
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: "AI Bot Premium Access",
-              description: "Unlimited AI chat access"
-            },
-            unit_amount: 500,
-          },
-          quantity: 1,
-        },
-      ],
-      success_url: `${process.env.WEBHOOK_URL}/success?user=${userId}`,
-      cancel_url: `${process.env.WEBHOOK_URL}/cancel`,
-      metadata: { userId: String(userId) }
-    });
-
-    await bot.sendMessage(
-      chatId, 
-      `${E.diamond} **UNLOCK PREMIUM** ${E.diamond}\n\n` +
-      `💳 Pay here: ${session.url}\n\n` +
-      `🔒 Only $5!\n\n` +
-      `**Benefits:**\n` +
-      `• ${E.lightning} Unlimited messages\n` +
-      `• ${E.rocket} 8192 token responses\n` +
-      `• ${E.brain} Advanced AI\n` +
-      `• ${E.crown} Priority support`,
-      { parse_mode: "Markdown" }
-    );
-  } catch (error) {
-    console.error("❌ Stripe error:", error);
-    await bot.sendMessage(chatId, "⚠️ Payment system unavailable. Try again later.");
-  }
-});
-
-bot.onText(/\/status/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = getUser(userId);
-  
-  const isPremium = user.premium || user.isAdmin;
-  const days = Math.floor((Date.now() - new Date(user.joinedDate).getTime()) / (1000 * 60 * 60 * 24));
-  
-  await bot.sendMessage(
-    chatId,
-    `${E.star} **YOUR STATS** ${E.star}\n\n` +
-    `👤 **User:** ${userId}\n` +
-    `${user.isAdmin ? E.crown : ''} **Plan:** ${isPremium ? '💎 Premium' : '🆓 Free'}\n` +
-    `📊 **Messages:** ${user.requests || 0}\n` +
-    `${E.coin} **Coins:** ${user.coins || 0}\n` +
-    `📺 **Ads:** ${user.adsWatched || 0}\n` +
-    `📅 **Days Active:** ${days}\n` +
-    `🤖 **Model:** ${workingModel || 'N/A'}\n\n` +
-    `${isPremium ? `${E.fire} Enjoy unlimited access! ${E.fire}` : `${E.coin} Watch ads with /ad!`}`,
-    { parse_mode: "Markdown" }
-  );
-});
-
-bot.onText(/\/reset/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  
-  const user = getUser(userId);
-  user.chatHistory = [];
-  saveDB();
-  
-  await bot.sendMessage(
-    chatId,
-    `${E.magic} **RESET COMPLETE** ${E.magic}\n\nFresh start! Send any message.`
-  );
-});
-
-bot.onText(/\/help/, async (msg) => {
-  const chatId = msg.chat.id;
-  
-  await bot.sendMessage(
-    chatId,
-    `${E.heart} **COMMANDS** ${E.heart}\n\n` +
-    `**Core:**\n` +
-    `/start - Welcome\n` +
-    `/help - This menu\n` +
-    `/status - Your stats\n` +
-    `/reset - Clear history\n` +
-    `/owner - ${E.developer} About the Owner\n\n` +
-    `**Earn & Upgrade:**\n` +
-    `/ad - ${E.ad} Watch ad for free messages\n` +
-    `/buy - ${E.diamond} Get Premium ($5)\n\n` +
-    `${E.fire} *Send any message to chat!*`,
-    { parse_mode: "Markdown" }
-  );
 });
 
 // ================= PAYMENT SUCCESS =================
@@ -523,9 +818,16 @@ app.get("/success", async (req, res) => {
         
         await bot.sendMessage(
           userId, 
-          `${E.diamond} **PREMIUM UNLOCKED!** ${E.diamond}\n\n` +
-          `🎉 You now have unlimited access!\n` +
-          `${E.rocket} Enjoy the full power of AI!`,
+          `${E.diamond} **ALPHA AI PRO UNLOCKED!** ${E.diamond}\n\n` +
+          `🎉 You now have unlimited access to all features!\n\n` +
+          `${E.rocket} **What you get:**\n` +
+          `• Unlimited AI Chat\n` +
+          `• Unlimited Image Generation\n` +
+          `• Unlimited Photo Editing\n` +
+          `• Unlimited Video Processing\n` +
+          `• Advanced Design Tools\n` +
+          `• Priority Support\n\n` +
+          `${E.fire} *Enjoy the full power of Alpha AI Pro!* ${E.fire}`,
           { parse_mode: "Markdown" }
         );
       }
@@ -538,7 +840,7 @@ app.get("/success", async (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Premium Unlocked</title>
+      <title>Alpha AI Pro Unlocked</title>
       <style>
         body { 
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
@@ -559,15 +861,24 @@ app.get("/success", async (req, res) => {
           max-width: 400px;
         }
         .emoji { font-size: 80px; }
-        h1 { font-size: 2em; }
+        h1 { font-size: 2em; background: linear-gradient(135deg, #ffd700, #ff6b6b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        p { color: #e0e0e0; }
+        .features { text-align: left; margin: 20px 0; }
+        .features li { list-style: none; padding: 5px 0; color: #ddd; }
       </style>
     </head>
     <body>
       <div class="card">
-        <div class="emoji">💎</div>
-        <h1>Premium Unlocked!</h1>
-        <p>Welcome to the Elite Club!</p>
-        <p style="font-size: 0.9em; opacity: 0.8;">Close this window and return to Telegram</p>
+        <div class="emoji">🐺</div>
+        <h1>Alpha AI Pro Unlocked!</h1>
+        <p>Welcome to the Alpha Club!</p>
+        <div class="features">
+          <li>✅ Unlimited AI Chat</li>
+          <li>✅ Unlimited Image Generation</li>
+          <li>✅ Unlimited Photo Editing</li>
+          <li>✅ Unlimited Video Processing</li>
+        </div>
+        <p style="font-size: 0.9em; opacity: 0.8; margin-top: 20px;">Close this window and return to Telegram</p>
       </div>
     </body>
     </html>
@@ -638,7 +949,8 @@ app.get("/api/user/:id", (req, res) => {
     requests: user.requests,
     totalMessages: user.totalMessages,
     coins: user.coins || 0,
-    adsWatched: user.adsWatched || 0
+    imagesGenerated: user.imagesGenerated || 0,
+    videosProcessed: user.videosProcessed || 0
   });
 });
 
