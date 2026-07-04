@@ -18,6 +18,31 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
+// ================= OWNER CONFIGURATION =================
+const OWNER = {
+  name: "Muhammad Ilyas",
+  username: "@KING_OF_ALPHA",
+  telegram: "https://t.me/KING_OF_ALPHA",
+  github: "https://github.com/mamme234",
+  email: "ghazimuhammadilyas@gmail.com",
+  bio: "👑 King of Alpha | Full-Stack Developer | AI Enthusiast | Creator of this Bot",
+  skills: [
+    "JavaScript", 
+    "Python", 
+    "AI/ML", 
+    "Web Development", 
+    "Bot Development",
+    "Blockchain",
+    "Cloud Computing"
+  ],
+  achievements: [
+    "🏆 Built 50+ Bots",
+    "🚀 10k+ Active Users",
+    "💡 AI Innovator",
+    "👑 Alpha Developer"
+  ]
+};
+
 // ================= ADMIN CONFIGURATION =================
 const ADMIN_IDS = [
   "123456789", // ⭐ Replace with your Telegram user ID
@@ -41,7 +66,13 @@ const E = {
   robot: "🤖",
   heart: "❤️",
   ad: "📢",
-  coin: "🪙"
+  coin: "🪙",
+  developer: "👨‍💻",
+  code: "💻",
+  link: "🔗",
+  mail: "📧",
+  trophy: "🏆",
+  alpha: "🐺"
 };
 
 // ================= VALIDATE ENV =================
@@ -67,9 +98,9 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ================= MODEL SELECTION =================
 const TEST_MODELS = [
-  "gemini-2.5-flash",  // Move this to the top
+  "gemini-2.5-flash",
+  "gemini-2.0-flash", 
   "gemini-3.5-flash",
-  "gemini-2.0-flash",
   "gemini-flash-latest"
 ];
 
@@ -196,7 +227,6 @@ async function showAd(chatId, userId) {
   try {
     const user = getUser(userId);
     
-    // Send ad message
     await bot.sendMessage(
       chatId,
       `${E.ad} **WATCH AN AD TO EARN COINS** ${E.ad}\n\n` +
@@ -214,6 +244,23 @@ async function showAd(chatId, userId) {
   }
 }
 
+// ================= OWNER INFO =================
+function getOwnerInfo() {
+  return `${E.alpha} **ABOUT THE OWNER** ${E.alpha}\n\n` +
+    `👤 **Name:** ${OWNER.name}\n` +
+    `📝 **Username:** ${OWNER.username}\n` +
+    `📋 **Bio:** ${OWNER.bio}\n\n` +
+    `${E.code} **Skills:**\n` +
+    `${OWNER.skills.map(s => `• ${s}`).join('\n')}\n\n` +
+    `${E.trophy} **Achievements:**\n` +
+    `${OWNER.achievements.map(a => `• ${a}`).join('\n')}\n\n` +
+    `${E.link} **Connect with Me:**\n` +
+    `• Telegram: ${OWNER.telegram}\n` +
+    `• GitHub: ${OWNER.github}\n` +
+    `• Email: ${OWNER.email}\n\n` +
+    `${E.heart} *Built with passion for the community!* ${E.heart}`;
+}
+
 // ================= MESSAGE HANDLER =================
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
@@ -224,7 +271,6 @@ bot.on("message", async (msg) => {
   try {
     const user = getUser(userId);
     
-    // Check if model is working
     if (!modelInitialized) {
       await findWorkingModel();
       if (!modelInitialized) {
@@ -232,15 +278,12 @@ bot.on("message", async (msg) => {
       }
     }
 
-    // Send typing indicator
     await bot.sendChatAction(chatId, "typing");
 
-    // Check limits
     const isPremium = user.premium || user.isAdmin;
     const maxFreeMessages = 5;
 
     if (!isPremium && user.requests >= maxFreeMessages) {
-      // Show ad option
       await bot.sendMessage(
         chatId,
         `${E.fire} **FREE LIMIT REACHED** ${E.fire}\n\n` +
@@ -256,26 +299,22 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // Store user message
     user.chatHistory = user.chatHistory || [];
     user.chatHistory.push({ role: "user", text: msg.text });
     user.requests = (user.requests || 0) + 1;
     user.totalMessages = (user.totalMessages || 0) + 1;
     db.stats.totalMessages = (db.stats.totalMessages || 0) + 1;
 
-    // Limit history
     const maxHistory = isPremium ? 50 : 10;
     if (user.chatHistory.length > maxHistory) {
       user.chatHistory = user.chatHistory.slice(-maxHistory);
     }
 
-    // Build context
     let context = "";
     for (const entry of user.chatHistory) {
       context += `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}\n`;
     }
 
-    // Generate response
     const result = await model.generateContent({
       contents: [
         {
@@ -293,14 +332,11 @@ bot.on("message", async (msg) => {
 
     const answer = result.response.text();
 
-    // Store response
     user.chatHistory.push({ role: "assistant", text: answer });
     saveDB();
 
-    // Send response
     await bot.sendMessage(chatId, answer);
 
-    // Show random ad after 3 messages
     if (!isPremium && user.requests % 3 === 0) {
       setTimeout(() => {
         showAd(chatId, userId);
@@ -314,95 +350,6 @@ bot.on("message", async (msg) => {
       `${E.sparkle} ⚠️ Error: ${error.message}\n\nPlease try again. ${E.sparkle}`
     );
   }
-});
-
-// ================= AD COMMAND =================
-bot.onText(/\/ad/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  await showAd(chatId, userId);
-});
-
-// ================= WATCH AD WEBHOOK =================
-app.get("/watch-ad", async (req, res) => {
-  const userId = req.query.user;
-  
-  if (userId) {
-    const user = getUser(userId);
-    user.adsWatched = (user.adsWatched || 0) + 1;
-    user.coins = (user.coins || 0) + 10;
-    
-    // Give extra 5 messages
-    user.requests = Math.max(0, (user.requests || 0) - 5);
-    
-    saveDB();
-    
-    // Notify user via Telegram
-    await bot.sendMessage(
-      userId,
-      `${E.coin} **AD WATCHED!** ${E.coin}\n\n` +
-      `✅ You earned 10 coins!\n` +
-      `📊 Total coins: ${user.coins}\n` +
-      `🔄 You got 5 extra free messages!\n\n` +
-      `Total ads watched: ${user.adsWatched}`,
-      { parse_mode: "Markdown" }
-    );
-  }
-  
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Ad Watched</title>
-      <style>
-        body {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          color: white;
-          text-align: center;
-          padding: 50px;
-          font-family: Arial, sans-serif;
-          min-height: 100vh;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-        }
-        .card {
-          background: rgba(255,255,255,0.1);
-          backdrop-filter: blur(10px);
-          padding: 40px;
-          border-radius: 20px;
-          max-width: 400px;
-        }
-        .coin { font-size: 80px; }
-        h1 { font-size: 2em; }
-        button {
-          background: #4CAF50;
-          color: white;
-          border: none;
-          padding: 15px 30px;
-          border-radius: 25px;
-          font-size: 1.1em;
-          cursor: pointer;
-          margin-top: 20px;
-          transition: all 0.3s;
-        }
-        button:hover {
-          transform: scale(1.05);
-          box-shadow: 0 5px 20px rgba(76, 175, 80, 0.4);
-        }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <div class="coin">🪙</div>
-        <h1>Ad Watched!</h1>
-        <p>You earned 10 coins and 5 free messages!</p>
-        <p style="font-size: 0.9em; opacity: 0.8;">You can now close this window</p>
-        <button onclick="window.close()">Close</button>
-      </div>
-    </body>
-    </html>
-  `);
 });
 
 // ================= COMMANDS =================
@@ -425,12 +372,30 @@ bot.onText(/\/start/, async (msg) => {
     `**Commands:**\n` +
     `/ad - ${E.ad} Watch ad for free messages\n` +
     `/buy - ${E.diamond} Upgrade to Premium ($5)\n` +
+    `/owner - ${E.developer} About the Owner\n` +
     `/status - ${E.star} Your stats\n` +
     `/reset - ${E.magic} Reset conversation\n` +
     `/help - ${E.heart} All commands\n\n` +
     `${E.fire} *Send any message to chat!* ${E.fire}`,
     { parse_mode: "Markdown" }
   );
+});
+
+// ================= OWNER COMMAND =================
+bot.onText(/\/owner/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  await bot.sendMessage(
+    chatId,
+    getOwnerInfo(),
+    { parse_mode: "Markdown", disable_web_page_preview: true }
+  );
+});
+
+bot.onText(/\/ad/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
+  await showAd(chatId, userId);
 });
 
 bot.onText(/\/buy/, async (msg) => {
@@ -533,7 +498,8 @@ bot.onText(/\/help/, async (msg) => {
     `/start - Welcome\n` +
     `/help - This menu\n` +
     `/status - Your stats\n` +
-    `/reset - Clear history\n\n` +
+    `/reset - Clear history\n` +
+    `/owner - ${E.developer} About the Owner\n\n` +
     `**Earn & Upgrade:**\n` +
     `/ad - ${E.ad} Watch ad for free messages\n` +
     `/buy - ${E.diamond} Get Premium ($5)\n\n` +
@@ -676,6 +642,19 @@ app.get("/api/user/:id", (req, res) => {
   });
 });
 
+app.get("/api/owner", (req, res) => {
+  res.json({
+    name: OWNER.name,
+    username: OWNER.username,
+    bio: OWNER.bio,
+    skills: OWNER.skills,
+    achievements: OWNER.achievements,
+    telegram: OWNER.telegram,
+    github: OWNER.github,
+    email: OWNER.email
+  });
+});
+
 // ================= TEST ENDPOINTS =================
 app.get("/test", async (req, res) => {
   try {
@@ -720,6 +699,7 @@ app.listen(PORT, async () => {
   console.log(`🤖 Working Model: ${workingModel || '❌ Not found'}`);
   console.log(`📊 Model Ready: ${modelInitialized}`);
   console.log(`👥 Users: ${Object.keys(db.users).length}`);
+  console.log(`👑 Owner: ${OWNER.name} (@${OWNER.username})`);
   
   await setWebhook();
   
