@@ -19,21 +19,50 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-// ================= OWNER CONFIGURATION =================
-const OWNER = {
+// ================= OWNER/DEVELOPER CONFIGURATION =================
+const DEVELOPER = {
   name: "Muhammad Ilyas",
   username: "@KING_OF_ALPHA",
   telegram: "https://t.me/KING_OF_ALPHA",
   github: "https://github.com/mamme234",
-  email: "ghazimuhammadilyas@gmail.com"
+  email: "ghazimuhammadilyas@gmail.com",
+  bio: "Full-Stack Developer | AI Enthusiast | Bot Creator",
+  skills: ["JavaScript", "Python", "AI/ML", "Web Development", "Bot Development"],
+  achievements: ["Built 50+ Bots", "10k+ Active Users", "AI Innovator", "Alpha Developer"]
 };
 
 const ADMIN_IDS = ["123456789"];
 
+// ================= DEVELOPER KEYWORDS =================
+const DEVELOPER_KEYWORDS = [
+  'who created you',
+  'who made you',
+  'who is your developer',
+  'who is your creator',
+  'who built you',
+  'who programmed you',
+  'who developed you',
+  'who is the developer',
+  'who is the creator',
+  'who is the owner',
+  'who owns you',
+  'who is behind you',
+  'tell me about the developer',
+  'tell me about the creator',
+  'who made this bot',
+  'who is king of alpha',
+  'muhammad ilyas',
+  'ilyas',
+  'king of alpha',
+  'developer name',
+  'creator name',
+  'owner name'
+];
+
 // ================= VALIDATE ENV =================
 console.log("🔍 Checking environment variables...");
 console.log("BOT_TOKEN:", process.env.BOT_TOKEN ? "✅ Set" : "❌ Missing");
-console.log("GEMINI_API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
+console.log("API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
 console.log("WEBHOOK_URL:", process.env.WEBHOOK_URL || "❌ Missing");
 
 const requiredEnv = ['BOT_TOKEN', 'GEMINI_API_KEY', 'WEBHOOK_URL'];
@@ -48,35 +77,37 @@ for (const env of requiredEnv) {
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Initialize AI Engine
+const aiEngine = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ================= MODEL SELECTION =================
-const TEST_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.5-flash"];
-let workingModel = null;
-let model = null;
-let modelInitialized = false;
+// ================= AI MODEL SELECTION =================
+const AI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.5-flash"];
+let activeModel = null;
+let aiProcessor = null;
+let aiReady = false;
 
-async function findWorkingModel() {
-  for (const modelName of TEST_MODELS) {
+async function initializeAI() {
+  for (const modelName of AI_MODELS) {
     try {
-      const testModel = genAI.getGenerativeModel({ 
+      const testModel = aiEngine.getGenerativeModel({ 
         model: modelName,
         generationConfig: { temperature: 0.7, maxOutputTokens: 100 }
       });
       await testModel.generateContent({
         contents: [{ role: "user", parts: [{ text: "Say hello" }] }]
       });
-      workingModel = modelName;
-      model = testModel;
-      modelInitialized = true;
+      activeModel = modelName;
+      aiProcessor = testModel;
+      aiReady = true;
+      console.log(`✅ Alpha AI Engine initialized`);
       return true;
     } catch (error) {
-      console.error(`❌ ${modelName} failed:`, error.message);
+      console.error(`❌ Model failed:`, error.message);
     }
   }
   return false;
 }
-await findWorkingModel();
+await initializeAI();
 
 // ================= DB =================
 const DB_FILE = "./db.json";
@@ -139,6 +170,29 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   }
 });
 
+// ================= DEVELOPER INFO FUNCTION =================
+function getDeveloperInfo() {
+  return `👑 **Alpha AI Pro - Developer**\n\n` +
+    `👤 **Name:** ${DEVELOPER.name}\n` +
+    `📝 **Username:** ${DEVELOPER.username}\n` +
+    `📋 **Bio:** ${DEVELOPER.bio}\n\n` +
+    `💻 **Skills:**\n` +
+    `${DEVELOPER.skills.map(s => `• ${s}`).join('\n')}\n\n` +
+    `🏆 **Achievements:**\n` +
+    `${DEVELOPER.achievements.map(a => `• ${a}`).join('\n')}\n\n` +
+    `🔗 **Connect:**\n` +
+    `• Telegram: ${DEVELOPER.telegram}\n` +
+    `• GitHub: ${DEVELOPER.github}\n` +
+    `• Email: ${DEVELOPER.email}\n\n` +
+    `❤️ *Built with passion for the community!*`;
+}
+
+// ================= CHECK FOR DEVELOPER QUESTION =================
+function isDeveloperQuestion(text) {
+  const lowerText = text.toLowerCase();
+  return DEVELOPER_KEYWORDS.some(keyword => lowerText.includes(keyword));
+}
+
 // ================= IMAGE GENERATOR =================
 async function generateImage(prompt, userId) {
   try {
@@ -146,7 +200,7 @@ async function generateImage(prompt, userId) {
     const isPremium = user.premium || user.isAdmin;
     
     if (!isPremium && user.imagesGenerated >= 2) {
-      return { error: "⚠️ Free limit reached. Upgrade to premium for unlimited images!" };
+      return { error: "⚠️ Free limit reached. Upgrade to Alpha Pro for unlimited images!" };
     }
     
     const canvas = createCanvas(1024, 768);
@@ -224,12 +278,10 @@ async function generateImage(prompt, userId) {
       y += 35;
     }
     
-    // Footer
+    // Footer - Show developer name
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.font = '14px Arial';
-    ctx.fillText(`User: ${userId.substring(0, 10)}`, 50, 700);
-    ctx.fillText(`Model: ${workingModel}`, 512, 700);
-    ctx.fillText(new Date().toLocaleDateString(), 850, 700);
+    ctx.font = '12px Arial';
+    ctx.fillText(`Alpha AI Pro • By ${DEVELOPER.name}`, 512, 700);
     
     if (isPremium) {
       ctx.fillStyle = '#FFD700';
@@ -253,8 +305,8 @@ function getMainKeyboard() {
     reply_markup: {
       keyboard: [
         [{ text: '💬 Chat' }, { text: '🖼️ Image' }, { text: '📸 Photo' }],
-        [{ text: '🎬 Video' }, { text: '🎨 Design' }, { text: '👑 Owner' }],
-        [{ text: '📊 Status' }, { text: '💎 Premium' }, { text: '🔄 Reset' }],
+        [{ text: '🎬 Video' }, { text: '🎨 Design' }, { text: '👑 Developer' }],
+        [{ text: '📊 Status' }, { text: '💎 Pro' }, { text: '🔄 Reset' }],
         [{ text: '❓ Help' }]
       ],
       resize_keyboard: true,
@@ -295,7 +347,7 @@ bot.onText(/\/start|\/menu|🔙 Main Menu/, async (msg) => {
   const userId = String(msg.from.id);
   const user = getUser(userId);
   const isPremium = user.premium || user.isAdmin;
-  const status = isPremium ? '💎 Premium' : '🆓 Free';
+  const status = isPremium ? '💎 Alpha Pro' : '🆓 Free';
   
   await bot.sendMessage(
     chatId,
@@ -318,7 +370,7 @@ bot.onText(/💬 Chat/, async (msg) => {
   await bot.sendMessage(
     chatId,
     `💬 **Chat Mode**\n\n` +
-    `Send me any message and I'll respond like ChatGPT!\n\n` +
+    `Send me any message and I'll respond like a pro!\n\n` +
     `💡 Try asking:\n` +
     `• "Explain quantum computing"\n` +
     `• "Write a poem about AI"\n` +
@@ -408,26 +460,13 @@ bot.onText(/🎨 Design/, async (msg) => {
   );
 });
 
-// Owner Button
-bot.onText(/👑 Owner/, async (msg) => {
+// Developer Button
+bot.onText(/👑 Developer/, async (msg) => {
   const chatId = msg.chat.id;
   await bot.sendMessage(
     chatId,
-    `👑 **Alpha AI Pro - Owner**\n\n` +
-    `👤 Name: Muhammad Ilyas\n` +
-    `📝 Username: @KING_OF_ALPHA\n` +
-    `📋 Bio: Full-Stack Developer | AI Enthusiast\n\n` +
-    `🏆 **Achievements:**\n` +
-    `• Built 50+ Bots\n` +
-    `• 10k+ Active Users\n` +
-    `• AI Innovator\n` +
-    `• Alpha Developer\n\n` +
-    `🔗 **Connect:**\n` +
-    `• Telegram: @KING_OF_ALPHA\n` +
-    `• GitHub: mamme234\n` +
-    `• Email: ghazimuhammadilyas@gmail.com\n\n` +
-    `❤️ *Built with passion for the community!*`,
-    { parse_mode: "Markdown" }
+    getDeveloperInfo(),
+    { parse_mode: "Markdown", disable_web_page_preview: true }
   );
 });
 
@@ -443,19 +482,18 @@ bot.onText(/📊 Status/, async (msg) => {
     chatId,
     `📊 **Your Profile**\n\n` +
     `👤 User ID: \`${userId}\`\n` +
-    `💎 Plan: ${isPremium ? 'Premium' : 'Free'}\n` +
+    `💎 Plan: ${isPremium ? 'Alpha Pro' : 'Free'}\n` +
     `📊 Messages: ${user.requests || 0}\n` +
     `🖼️ Images: ${user.imagesGenerated || 0}\n` +
     `🪙 Coins: ${user.coins || 0}\n` +
-    `📅 Days Active: ${days}\n` +
-    `🤖 Model: ${workingModel || 'N/A'}\n\n` +
-    `${isPremium ? '🎉 Enjoy unlimited access!' : '💎 Upgrade with /buy'}`,
+    `📅 Days Active: ${days}\n\n` +
+    `${isPremium ? '🎉 Enjoy unlimited access!' : '💎 Upgrade with the Pro button'}`,
     { parse_mode: "Markdown" }
   );
 });
 
-// Premium Button
-bot.onText(/💎 Premium/, async (msg) => {
+// Pro Button
+bot.onText(/💎 Pro/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = getUser(userId);
@@ -463,7 +501,7 @@ bot.onText(/💎 Premium/, async (msg) => {
   if (user.isAdmin) {
     await bot.sendMessage(
       chatId,
-      `👑 **Admin Access**\n\nYou already have unlimited access!`
+      `👑 **Admin Access**\n\nYou already have Alpha Pro access!`
     );
     return;
   }
@@ -490,10 +528,10 @@ bot.onText(/💎 Premium/, async (msg) => {
 
     await bot.sendMessage(
       chatId,
-      `💎 **Unlock Alpha AI Pro**\n\n` +
+      `💎 **Alpha AI Pro**\n\n` +
       `💳 Pay: ${session.url}\n\n` +
       `🔒 Only $5 - One Time!\n\n` +
-      `**✨ Premium Features:**\n` +
+      `**✨ Pro Features:**\n` +
       `• Unlimited AI Chat\n` +
       `• Unlimited Images\n` +
       `• Unlimited Photo Editing\n` +
@@ -538,12 +576,14 @@ bot.onText(/❓ Help/, async (msg) => {
     `• Send a video and tell me what to do\n\n` +
     `**🎨 Design Tools**\n` +
     `• Describe the design you want\n\n` +
-    `**💎 Premium**\n` +
-    `• Click "💎 Premium" to upgrade\n\n` +
+    `**💎 Alpha Pro**\n` +
+    `• Click "💎 Pro" to upgrade\n\n` +
+    `**👑 Developer**\n` +
+    `• Click "👑 Developer" to learn about the creator\n\n` +
     `**Free Limits:**\n` +
     `• 5 messages\n` +
     `• 2 images\n\n` +
-    `**Premium:**\n` +
+    `**Alpha Pro:**\n` +
     `• Unlimited everything! 🚀`,
     { parse_mode: "Markdown" }
   );
@@ -624,10 +664,20 @@ bot.on("message", async (msg) => {
   try {
     const user = getUser(userId);
     
-    if (!modelInitialized) {
-      await findWorkingModel();
-      if (!modelInitialized) {
-        throw new Error("Model not initialized");
+    // ================= CHECK FOR DEVELOPER QUESTION =================
+    if (isDeveloperQuestion(text)) {
+      await bot.sendMessage(
+        chatId,
+        getDeveloperInfo(),
+        { parse_mode: "Markdown", disable_web_page_preview: true }
+      );
+      return;
+    }
+    
+    if (!aiReady) {
+      await initializeAI();
+      if (!aiReady) {
+        throw new Error("AI Engine not ready");
       }
     }
 
@@ -645,8 +695,8 @@ bot.on("message", async (msg) => {
           chatId,
           `⚠️ **Image limit reached!**\n\n` +
           `You've used all 2 free images.\n` +
-          `💎 Upgrade to Premium for unlimited!\n\n` +
-          `Use the "💎 Premium" button.`
+          `💎 Upgrade to Alpha Pro for unlimited!\n\n` +
+          `Use the "💎 Pro" button.`
         );
         return;
       }
@@ -669,8 +719,8 @@ bot.on("message", async (msg) => {
         chatId,
         `⚠️ **Free limit reached!**\n\n` +
         `You've used 5 free messages.\n` +
-        `💎 Upgrade to Premium for unlimited!\n\n` +
-        `Use the "💎 Premium" button.`
+        `💎 Upgrade to Alpha Pro for unlimited!\n\n` +
+        `Use the "💎 Pro" button.`
       );
       return;
     }
@@ -692,11 +742,11 @@ bot.on("message", async (msg) => {
       context += `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.content}\n`;
     }
 
-    const result = await model.generateContent({
+    const result = await aiProcessor.generateContent({
       contents: [{
         role: "user",
         parts: [{ 
-          text: `You are Alpha AI Pro, a professional ChatGPT-style assistant. 
+          text: `You are Alpha AI Pro, a professional AI assistant created by Muhammad Ilyas (@KING_OF_ALPHA). 
           Provide clear, detailed, and helpful responses. Use formatting when needed.
           
           Conversation:
@@ -794,7 +844,7 @@ app.get("/cancel", (req, res) => {
       <div class="card">
         <div class="emoji">😅</div>
         <h1>Cancelled</h1>
-        <p>You can try again anytime with the Premium button</p>
+        <p>You can try again anytime with the Pro button</p>
       </div>
     </body>
     </html>
@@ -809,7 +859,6 @@ app.get("/", (req, res) => {
 app.get("/api/status", (req, res) => {
   res.json({
     status: "✅ Online",
-    model: workingModel,
     users: Object.keys(db.users).length,
     totalMessages: db.stats.totalMessages || 0
   });
@@ -817,9 +866,9 @@ app.get("/api/status", (req, res) => {
 
 // ================= START SERVER =================
 app.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🤖 Working Model: ${workingModel || '❌ Not found'}`);
+  console.log(`🐺 Alpha AI Pro Server running on port ${PORT}`);
   console.log(`👥 Users: ${Object.keys(db.users).length}`);
+  console.log(`👑 Developer: ${DEVELOPER.name} (@${DEVELOPER.username})`);
   await setWebhook();
   console.log(`✅ Bot ready!`);
 });
