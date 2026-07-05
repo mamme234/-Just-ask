@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import Stripe from "stripe";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import OpenAI from "openai";
+import axios from "axios";
 import path from "path";
 import { fileURLToPath } from 'url';
 import { createCanvas } from 'canvas';
@@ -49,10 +49,9 @@ const DEVELOPER_KEYWORDS = [
 console.log("🔍 Checking environment variables...");
 console.log("BOT_TOKEN:", process.env.BOT_TOKEN ? "✅ Set" : "❌ Missing");
 console.log("GEMINI_API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
-console.log("XAI_API_KEY:", process.env.XAI_API_KEY ? "✅ Set" : "❌ Missing");
 console.log("WEBHOOK_URL:", process.env.WEBHOOK_URL || "❌ Missing");
 
-const requiredEnv = ['BOT_TOKEN', 'GEMINI_API_KEY', 'XAI_API_KEY', 'WEBHOOK_URL'];
+const requiredEnv = ['BOT_TOKEN', 'GEMINI_API_KEY', 'WEBHOOK_URL'];
 for (const env of requiredEnv) {
   if (!process.env[env]) {
     console.error(`❌ Missing required environment variable: ${env}`);
@@ -70,12 +69,6 @@ const AI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash"];
 let activeModel = null;
 let aiProcessor = null;
 let aiReady = false;
-
-// ================= XAI/Grok for Image Generation =================
-const xaiClient = new OpenAI({
-    apiKey: process.env.XAI_API_KEY,
-    baseURL: 'https://api.x.ai/v1',
-});
 
 // ================= QUOTA MANAGEMENT =================
 const DAILY_LIMIT = 15;
@@ -215,7 +208,7 @@ function isDeveloperQuestion(text) {
   return DEVELOPER_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-// ================= IMAGE GENERATION WITH GROK =================
+// ================= IMAGE GENERATION WITH POLLINATIONS AI (FREE) =================
 async function generateImage(prompt, userId) {
   try {
     const user = getUser(userId);
@@ -225,30 +218,32 @@ async function generateImage(prompt, userId) {
       return { error: "⚠️ Free limit reached. Upgrade to Alpha Pro for unlimited images!" };
     }
     
-    console.log(`🖼️ Generating image with Grok: "${prompt.substring(0, 50)}..."`);
+    console.log(`🖼️ Generating image with Pollinations AI: "${prompt.substring(0, 50)}..."`);
     
-    const response = await xaiClient.images.generate({
-      model: "grok-imagine-image-quality",
-      prompt: prompt,
-      n: 1,
-      response_format: "b64_json",
+    // Pollinations AI - Completely FREE, no API key needed!
+    const encodedPrompt = encodeURIComponent(prompt);
+    const imageUrl = `https://pollinations.ai/p/${encodedPrompt}?width=1024&height=768&model=flux&nologo=true`;
+    
+    // Download the image
+    const response = await axios.get(imageUrl, { 
+      responseType: 'arraybuffer',
+      timeout: 30000
     });
     
-    const imageBuffer = Buffer.from(response.data[0].b64_json, 'base64');
+    const imageBuffer = Buffer.from(response.data);
     
     user.imagesGenerated = (user.imagesGenerated || 0) + 1;
     saveDB();
     
     return { 
       buffer: imageBuffer, 
-      description: `✨ "${prompt}"`,
-      revised: response.data[0].revised_prompt || null
+      description: `✨ "${prompt}"`
     };
     
   } catch (error) {
-    console.error("❌ Grok image error:", error.message);
+    console.error("❌ Pollinations image error:", error.message);
     
-    // Fallback to Gemini canvas image
+    // Fallback to canvas image
     try {
       console.log("🔄 Falling back to canvas for image...");
       return await generateImageCanvas(prompt, userId);
@@ -634,7 +629,8 @@ bot.onText(/❓ Help/, async (msg) => {
     `**🤖 AI Chat**\n` +
     `• Click "💬 Chat" or type any message\n\n` +
     `**🖼️ Image Generation**\n` +
-    `• Click "🖼️ Image" and describe what you want\n\n` +
+    `• Click "🖼️ Image" and describe what you want\n` +
+    `• Powered by Pollinations AI (FREE)\n\n` +
     `**📸 Photo Editing**\n` +
     `• Send a photo and tell me the effect\n\n` +
     `**🎬 Video Processing**\n` +
@@ -867,7 +863,7 @@ app.get("/success", async (req, res) => {
           `💎 **Alpha AI Pro Unlocked!**\n\n` +
           `🎉 You now have unlimited access to all features!\n\n` +
           `• Unlimited AI Chat\n` +
-          `• Unlimited Images\n` +
+          `• Unlimited Images (Powered by Pollinations AI)\n` +
           `• Unlimited Photo Editing\n` +
           `• Unlimited Video Processing\n` +
           `• Advanced Design Tools\n\n` +
@@ -941,6 +937,7 @@ app.listen(PORT, async () => {
   console.log(`🐺 Alpha AI Pro Server running on port ${PORT}`);
   console.log(`👥 Users: ${Object.keys(db.users).length}`);
   console.log(`👑 Developer: ${DEVELOPER.name} (@${DEVELOPER.username})`);
+  console.log(`🖼️ Image Generator: Pollinations AI (FREE)`);
   await setWebhook();
   console.log(`✅ Bot ready!`);
 });
