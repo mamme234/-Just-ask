@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import Stripe from "stripe";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 import path from "path";
 import { fileURLToPath } from 'url';
 import { createCanvas } from 'canvas';
@@ -19,7 +20,7 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-// ================= OWNER/DEVELOPER CONFIGURATION =================
+// ================= DEVELOPER CONFIGURATION =================
 const DEVELOPER = {
   name: "Muhammad Ilyas",
   username: "@KING_OF_ALPHA",
@@ -31,41 +32,27 @@ const DEVELOPER = {
   achievements: ["Built 50+ Bots", "10k+ Active Users", "AI Innovator", "Alpha Developer"]
 };
 
-const ADMIN_IDS = ["7154361039"];
+const ADMIN_IDS = ["123456789"];
 
 // ================= DEVELOPER KEYWORDS =================
 const DEVELOPER_KEYWORDS = [
-  'who created you',
-  'who made you',
-  'who is your developer',
-  'who is your creator',
-  'who built you',
-  'who programmed you',
-  'who developed you',
-  'who is the developer',
-  'who is the creator',
-  'who is the owner',
-  'who owns you',
-  'who is behind you',
-  'tell me about the developer',
-  'tell me about the creator',
-  'who made this bot',
-  'who is king of alpha',
-  'muhammad ilyas',
-  'ilyas',
-  'king of alpha',
-  'developer name',
-  'creator name',
-  'owner name'
+  'who created you', 'who made you', 'who is your developer',
+  'who is your creator', 'who built you', 'who programmed you',
+  'who developed you', 'who is the developer', 'who is the creator',
+  'who is the owner', 'who owns you', 'who is behind you',
+  'tell me about the developer', 'tell me about the creator',
+  'who made this bot', 'who is king of alpha', 'muhammad ilyas',
+  'ilyas', 'king of alpha', 'developer name', 'creator name', 'owner name'
 ];
 
 // ================= VALIDATE ENV =================
 console.log("🔍 Checking environment variables...");
 console.log("BOT_TOKEN:", process.env.BOT_TOKEN ? "✅ Set" : "❌ Missing");
-console.log("API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
+console.log("GEMINI_API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
+console.log("XAI_API_KEY:", process.env.XAI_API_KEY ? "✅ Set" : "❌ Missing");
 console.log("WEBHOOK_URL:", process.env.WEBHOOK_URL || "❌ Missing");
 
-const requiredEnv = ['BOT_TOKEN', 'GEMINI_API_KEY', 'WEBHOOK_URL'];
+const requiredEnv = ['BOT_TOKEN', 'GEMINI_API_KEY', 'XAI_API_KEY', 'WEBHOOK_URL'];
 for (const env of requiredEnv) {
   if (!process.env[env]) {
     console.error(`❌ Missing required environment variable: ${env}`);
@@ -77,15 +64,51 @@ for (const env of requiredEnv) {
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Initialize AI Engine
+// ================= AI ENGINE (Gemini for Chat) =================
 const aiEngine = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// ================= AI MODEL SELECTION =================
-const AI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.5-flash"];
+const AI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash"];
 let activeModel = null;
 let aiProcessor = null;
 let aiReady = false;
 
+// ================= XAI/Grok for Image Generation =================
+const xaiClient = new OpenAI({
+    apiKey: process.env.XAI_API_KEY,
+    baseURL: 'https://api.x.ai/v1',
+});
+
+// ================= QUOTA MANAGEMENT =================
+const DAILY_LIMIT = 15;
+const userRequests = {};
+
+function checkQuota(userId) {
+  const today = new Date().toDateString();
+  if (!userRequests[userId]) {
+    userRequests[userId] = { date: today, count: 0 };
+  }
+  if (userRequests[userId].date !== today) {
+    userRequests[userId] = { date: today, count: 0 };
+  }
+  return userRequests[userId].count < DAILY_LIMIT;
+}
+
+function incrementQuota(userId) {
+  if (!userRequests[userId]) {
+    userRequests[userId] = { date: new Date().toDateString(), count: 0 };
+  }
+  userRequests[userId].count++;
+}
+
+function getFallbackResponse() {
+  const responses = [
+    "🐺 *Alpha AI Pro is currently at capacity. Please try again in a few minutes.*\n\n_This helps ensure fair usage for all users._",
+    "🐺 *The AI is taking a quick break. Please try again shortly.*\n\n_We appreciate your patience!_",
+    "🐺 *High demand right now. Please wait a moment before trying again.*\n\n_Thank you for using Alpha AI Pro!_"
+  ];
+  return responses[Math.floor(Math.random() * responses.length)];
+}
+
+// ================= INITIALIZE AI =================
 async function initializeAI() {
   for (const modelName of AI_MODELS) {
     try {
@@ -99,7 +122,7 @@ async function initializeAI() {
       activeModel = modelName;
       aiProcessor = testModel;
       aiReady = true;
-      console.log(`✅ Alpha AI Engine initialized`);
+      console.log(`✅ Alpha AI Engine initialized with ${modelName}`);
       return true;
     } catch (error) {
       console.error(`❌ Model failed:`, error.message);
@@ -170,7 +193,7 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   }
 });
 
-// ================= DEVELOPER INFO FUNCTION =================
+// ================= DEVELOPER INFO =================
 function getDeveloperInfo() {
   return `👑 **Alpha AI Pro - Developer**\n\n` +
     `👤 **Name:** ${DEVELOPER.name}\n` +
@@ -187,14 +210,56 @@ function getDeveloperInfo() {
     `❤️ *Built with passion for the community!*`;
 }
 
-// ================= CHECK FOR DEVELOPER QUESTION =================
 function isDeveloperQuestion(text) {
   const lowerText = text.toLowerCase();
   return DEVELOPER_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-// ================= IMAGE GENERATOR =================
+// ================= IMAGE GENERATION WITH GROK =================
 async function generateImage(prompt, userId) {
+  try {
+    const user = getUser(userId);
+    const isPremium = user.premium || user.isAdmin;
+    
+    if (!isPremium && user.imagesGenerated >= 2) {
+      return { error: "⚠️ Free limit reached. Upgrade to Alpha Pro for unlimited images!" };
+    }
+    
+    console.log(`🖼️ Generating image with Grok: "${prompt.substring(0, 50)}..."`);
+    
+    const response = await xaiClient.images.generate({
+      model: "grok-imagine-image-quality",
+      prompt: prompt,
+      n: 1,
+      response_format: "b64_json",
+    });
+    
+    const imageBuffer = Buffer.from(response.data[0].b64_json, 'base64');
+    
+    user.imagesGenerated = (user.imagesGenerated || 0) + 1;
+    saveDB();
+    
+    return { 
+      buffer: imageBuffer, 
+      description: `✨ "${prompt}"`,
+      revised: response.data[0].revised_prompt || null
+    };
+    
+  } catch (error) {
+    console.error("❌ Grok image error:", error.message);
+    
+    // Fallback to Gemini canvas image
+    try {
+      console.log("🔄 Falling back to Gemini canvas for image...");
+      return await generateImageGemini(prompt, userId);
+    } catch (fallbackError) {
+      return { error: "⚠️ Failed to generate image. Please try again." };
+    }
+  }
+}
+
+// ================= FALLBACK: Gemini Canvas Image =================
+async function generateImageGemini(prompt, userId) {
   try {
     const user = getUser(userId);
     const isPremium = user.premium || user.isAdmin;
@@ -278,7 +343,7 @@ async function generateImage(prompt, userId) {
       y += 35;
     }
     
-    // Footer - Show developer name
+    // Footer
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.font = '12px Arial';
     ctx.fillText(`Alpha AI Pro • By ${DEVELOPER.name}`, 512, 700);
@@ -299,7 +364,7 @@ async function generateImage(prompt, userId) {
   }
 }
 
-// ================= CREATE KEYBOARD BUTTONS =================
+// ================= KEYBOARD BUTTONS =================
 function getMainKeyboard() {
   return {
     reply_markup: {
@@ -664,7 +729,7 @@ bot.on("message", async (msg) => {
   try {
     const user = getUser(userId);
     
-    // ================= CHECK FOR DEVELOPER QUESTION =================
+    // Check for developer question
     if (isDeveloperQuestion(text)) {
       await bot.sendMessage(
         chatId,
@@ -713,7 +778,7 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // Regular chat
+    // Regular chat - check quota
     if (!isPremium && user.requests >= 5) {
       await bot.sendMessage(
         chatId,
@@ -725,6 +790,12 @@ bot.on("message", async (msg) => {
       return;
     }
 
+    // Check daily quota for AI
+    if (!checkQuota(userId)) {
+      await bot.sendMessage(chatId, getFallbackResponse(), { parse_mode: "Markdown" });
+      return;
+    }
+
     await bot.sendChatAction(chatId, "typing");
 
     user.chatHistory = user.chatHistory || [];
@@ -732,6 +803,7 @@ bot.on("message", async (msg) => {
     user.requests = (user.requests || 0) + 1;
     user.totalMessages = (user.totalMessages || 0) + 1;
     db.stats.totalMessages = (db.stats.totalMessages || 0) + 1;
+    incrementQuota(userId);
 
     if (user.chatHistory.length > (isPremium ? 50 : 10)) {
       user.chatHistory = user.chatHistory.slice(-(isPremium ? 50 : 10));
@@ -820,55 +892,4 @@ app.get("/success", async (req, res) => {
     </head>
     <body>
       <div class="card">
-        <div class="emoji">🐺</div>
-        <h1>Alpha AI Pro Unlocked!</h1>
-        <p>Welcome to the Alpha Club!</p>
-        <p>Close this window and return to Telegram</p>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
-app.get("/cancel", (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head><title>Cancelled</title>
-    <style>
-      body { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; text-align: center; padding: 50px; font-family: Arial; }
-      .card { background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); padding: 40px; border-radius: 20px; max-width: 400px; margin: auto; }
-    </style>
-    </head>
-    <body>
-      <div class="card">
-        <div class="emoji">😅</div>
-        <h1>Cancelled</h1>
-        <p>You can try again anytime with the Pro button</p>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
-// ================= WEB INTERFACE =================
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.get("/api/status", (req, res) => {
-  res.json({
-    status: "✅ Online",
-    users: Object.keys(db.users).length,
-    totalMessages: db.stats.totalMessages || 0
-  });
-});
-
-// ================= START SERVER =================
-app.listen(PORT, async () => {
-  console.log(`🐺 Alpha AI Pro Server running on port ${PORT}`);
-  console.log(`👥 Users: ${Object.keys(db.users).length}`);
-  console.log(`👑 Developer: ${DEVELOPER.name} (@${DEVELOPER.username})`);
-  await setWebhook();
-  console.log(`✅ Bot ready!`);
-});
+        <div class="emoji
