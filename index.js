@@ -31,7 +31,7 @@ const DEVELOPER = {
   achievements: ["Built 50+ Bots", "10k+ Active Users", "AI Innovator", "Alpha Developer"]
 };
 
-const ADMIN_IDS = ["123456789"];
+const ADMIN_IDS = ["7154361039"];
 
 // ================= DEVELOPER KEYWORDS =================
 const DEVELOPER_KEYWORDS = [
