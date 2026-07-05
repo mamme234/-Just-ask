@@ -250,16 +250,16 @@ async function generateImage(prompt, userId) {
     
     // Fallback to Gemini canvas image
     try {
-      console.log("🔄 Falling back to Gemini canvas for image...");
-      return await generateImageGemini(prompt, userId);
+      console.log("🔄 Falling back to canvas for image...");
+      return await generateImageCanvas(prompt, userId);
     } catch (fallbackError) {
       return { error: "⚠️ Failed to generate image. Please try again." };
     }
   }
 }
 
-// ================= FALLBACK: Gemini Canvas Image =================
-async function generateImageGemini(prompt, userId) {
+// ================= FALLBACK: Canvas Image =================
+async function generateImageCanvas(prompt, userId) {
   try {
     const user = getUser(userId);
     const isPremium = user.premium || user.isAdmin;
@@ -778,7 +778,7 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // Regular chat - check quota
+    // Regular chat - check limits
     if (!isPremium && user.requests >= 5) {
       await bot.sendMessage(
         chatId,
@@ -892,4 +892,64 @@ app.get("/success", async (req, res) => {
     </head>
     <body>
       <div class="card">
-        <div class="emoji
+        <div class="emoji">🐺</div>
+        <h1>Alpha AI Pro Unlocked!</h1>
+        <p>Welcome to the Alpha Club!</p>
+        <p>Close this window and return to Telegram</p>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+app.get("/cancel", (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>Cancelled</title>
+    <style>
+      body { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; text-align: center; padding: 50px; font-family: Arial; }
+      .card { background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); padding: 40px; border-radius: 20px; max-width: 400px; margin: auto; }
+    </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="emoji">😅</div>
+        <h1>Cancelled</h1>
+        <p>You can try again anytime with the Pro button</p>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// ================= WEB INTERFACE =================
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get("/api/status", (req, res) => {
+  res.json({
+    status: "✅ Online",
+    users: Object.keys(db.users).length,
+    totalMessages: db.stats.totalMessages || 0
+  });
+});
+
+// ================= START SERVER =================
+app.listen(PORT, async () => {
+  console.log(`🐺 Alpha AI Pro Server running on port ${PORT}`);
+  console.log(`👥 Users: ${Object.keys(db.users).length}`);
+  console.log(`👑 Developer: ${DEVELOPER.name} (@${DEVELOPER.username})`);
+  await setWebhook();
+  console.log(`✅ Bot ready!`);
+});
+
+// ================= ERROR HANDLING =================
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (error) => {
+  console.error('❌ Unhandled Rejection:', error);
+});
