@@ -8,6 +8,7 @@ import path from "path";
 import { fileURLToPath } from 'url';
 import { createCanvas } from 'canvas';
 import mongoose from "mongoose";
+import { MEDIA_DB } from './mediaDB.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,55 +48,6 @@ const DEVELOPER_KEYWORDS = [
   'boss', 'admin', 'owner'
 ];
 
-// ================= ENTERPRISE FEATURES CONFIGURATION =================
-const ENTERPRISE = {
-  memory: {
-    enabled: true,
-    maxHistory: 100,
-    importantKeywords: ['name', 'project', 'preference', 'remember', 'favorite']
-  },
-  multiModal: {
-    enabled: true,
-    supportedTypes: ['image', 'pdf', 'excel', 'csv', 'txt', 'doc', 'voice'],
-    maxFileSize: 20 * 1024 * 1024
-  },
-  grounding: {
-    enabled: true,
-    searchEnabled: true,
-    citationRequired: true
-  },
-  guardrails: {
-    enabled: true,
-    blockHarmful: true,
-    detectJailbreak: true
-  },
-  fallback: {
-    enabled: true,
-    maxUncertainty: 3,
-    humanHandoff: true
-  },
-  personality: {
-    enabled: true,
-    tone: 'professional',
-    consistency: true
-  },
-  clarification: {
-    enabled: true,
-    maxQuestions: 3,
-    threshold: 0.6
-  },
-  analytics: {
-    enabled: true,
-    trackDropOff: true,
-    retrainWeakSpots: true
-  },
-  rateLimits: {
-    enabled: true,
-    maxTokensPerMinute: 100000,
-    maxRequestsPerMinute: 60
-  }
-};
-
 // ================= VALIDATE ENV =================
 console.log("🔍 Checking environment variables...");
 console.log("BOT_TOKEN:", process.env.BOT_TOKEN ? "✅ Set" : "❌ Missing");
@@ -112,7 +64,6 @@ for (const env of requiredEnv) {
 }
 
 // ================= MONGODB CONNECTION =================
-// MongoDB Models
 const UserSchema = new mongoose.Schema({
   userId: { type: String, unique: true, required: true },
   premium: { type: Boolean, default: false },
@@ -123,21 +74,17 @@ const UserSchema = new mongoose.Schema({
   chatHistory: { type: Array, default: [] },
   coins: { type: Number, default: 0 },
   imagesGenerated: { type: Number, default: 0 },
-  videosProcessed: { type: Number, default: 0 },
   joinedDate: { type: Date, default: Date.now },
   memory: { type: Object, default: {} },
   lastActive: { type: Date, default: Date.now },
-  dropOffCount: { type: Number, default: 0 },
-  weakSpots: { type: Array, default: [] }
+  downloads: { type: Number, default: 0 }
 });
 
 const StatsSchema = new mongoose.Schema({
   totalUsers: { type: Number, default: 0 },
   totalMessages: { type: Number, default: 0 },
   totalImages: { type: Number, default: 0 },
-  totalVideos: { type: Number, default: 0 },
-  dropOffs: { type: Number, default: 0 },
-  weakSpots: { type: Object, default: {} },
+  totalDownloads: { type: Number, default: 0 },
   lastUpdated: { type: Date, default: Date.now }
 });
 
@@ -160,9 +107,7 @@ async function connectMongoDB() {
         totalUsers: 0,
         totalMessages: 0,
         totalImages: 0,
-        totalVideos: 0,
-        dropOffs: 0,
-        weakSpots: {}
+        totalDownloads: 0
       });
       console.log("✅ Stats initialized!");
     }
@@ -221,25 +166,6 @@ async function saveUser(userData) {
   }
 }
 
-async function updateStats(type, data = {}) {
-  try {
-    const update = {};
-    if (type === 'message') update.$inc = { totalMessages: 1 };
-    if (type === 'image') update.$inc = { totalImages: 1 };
-    if (type === 'video') update.$inc = { totalVideos: 1 };
-    if (type === 'dropoff') update.$inc = { dropOffs: 1 };
-    if (type === 'weakspot' && data.topic) {
-      const spot = await Stats.findOne();
-      const weakSpots = spot?.weakSpots || {};
-      weakSpots[data.topic] = (weakSpots[data.topic] || 0) + 1;
-      update.$set = { weakSpots };
-    }
-    await Stats.findOneAndUpdate({}, update, { upsert: true });
-  } catch (error) {
-    console.error("❌ Update stats error:", error);
-  }
-}
-
 // Fallback in-memory DB
 const fallbackDB = { users: {}, stats: { totalMessages: 0 } };
 
@@ -258,7 +184,8 @@ function getUserFallback(id) {
       coins: isAdmin ? 9999 : 0,
       imagesGenerated: 0,
       joinedDate: new Date().toISOString(),
-      memory: {}
+      memory: {},
+      downloads: 0
     };
   }
   return fallbackDB.users[userId];
@@ -274,250 +201,6 @@ const AI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash"];
 let activeModel = null;
 let aiProcessor = null;
 let aiReady = false;
-
-// ================= ENTERPRISE SYSTEMS =================
-
-// 1. MEMORY SYSTEM
-class MemorySystem {
-  constructor() {
-    this.memories = {};
-  }
-
-  async store(userId, key, value, importance = 'medium') {
-    const user = await getUser(userId);
-    if (!user.memory) user.memory = {};
-    user.memory[key] = {
-      value,
-      timestamp: Date.now(),
-      importance
-    };
-    await saveUser(user);
-  }
-
-  async recall(userId, key) {
-    const user = await getUser(userId);
-    if (user.memory && user.memory[key]) {
-      return user.memory[key].value;
-    }
-    return null;
-  }
-
-  async recallAll(userId) {
-    const user = await getUser(userId);
-    return user.memory || {};
-  }
-}
-
-const memorySystem = new MemorySystem();
-
-// 2. GUARDRAILS SYSTEM
-class Guardrails {
-  constructor() {
-    this.blockedPatterns = [
-      /hack/i, /exploit/i, /jailbreak/i, /ignore previous/i,
-      /bypass/i, /unauthorized/i, /malicious/i, /attack/i,
-      /destroy/i, /damage/i, /illegal/i, /harm/i,
-      /kill/i, /suicide/i, /drugs/i, /weapon/i
-    ];
-    this.jailbreakPatterns = [
-      /ignore all instructions/i,
-      /forget previous/i,
-      /act as if/i,
-      /you are now/i,
-      /bypass restrictions/i,
-      /override/i,
-      /system prompt/i
-    ];
-  }
-
-  check(text) {
-    const results = {
-      isHarmful: false,
-      isJailbreak: false,
-      warnings: []
-    };
-
-    for (const pattern of this.blockedPatterns) {
-      if (pattern.test(text)) {
-        results.isHarmful = true;
-        results.warnings.push(`Harmful content detected: ${pattern.source}`);
-        break;
-      }
-    }
-
-    for (const pattern of this.jailbreakPatterns) {
-      if (pattern.test(text)) {
-        results.isJailbreak = true;
-        results.warnings.push(`Jailbreak attempt detected: ${pattern.source}`);
-        break;
-      }
-    }
-
-    return results;
-  }
-}
-
-const guardrails = new Guardrails();
-
-// 3. CLARIFICATION SYSTEM
-class ClarificationSystem {
-  constructor() {
-    this.vaguePatterns = [
-      /help/i, /something/i, /anything/i, /everything/i,
-      /not sure/i, /maybe/i, /some/i, /whatever/i,
-      /idk/i, /dunno/i, /no idea/i
-    ];
-    this.followUpQuestions = {
-      general: [
-        "Could you provide more details about what you're looking for?",
-        "What specific aspect are you interested in?",
-        "Could you clarify your question a bit more?"
-      ],
-      technical: [
-        "What programming language or technology are you using?",
-        "Could you share the error message or specific issue?",
-        "What's the expected outcome?"
-      ],
-      professional: [
-        "What's the context of this request?",
-        "Who is the target audience?",
-        "What's the desired timeline?"
-      ]
-    };
-  }
-
-  needsClarification(text) {
-    const isVague = this.vaguePatterns.some(pattern => pattern.test(text));
-    const isShort = text.split(' ').length < 4;
-    return isVague || isShort;
-  }
-
-  generateQuestions(text, category = 'general') {
-    const questions = this.followUpQuestions[category] || this.followUpQuestions.general;
-    return questions.slice(0, ENTERPRISE.clarification.maxQuestions);
-  }
-}
-
-const clarificationSystem = new ClarificationSystem();
-
-// 4. PERSONALITY SYSTEM
-class PersonalitySystem {
-  constructor() {
-    this.tone = ENTERPRISE.personality.tone;
-    this.traits = {
-      professional: {
-        style: "formal, clear, structured",
-        greeting: "Hello",
-        signoff: "Regards",
-        emojis: "minimal"
-      },
-      empathetic: {
-        style: "warm, supportive, understanding",
-        greeting: "Hi there",
-        signoff: "Take care",
-        emojis: "moderate"
-      },
-      witty: {
-        style: "clever, humorous, engaging",
-        greeting: "Hey",
-        signoff: "Catch you later",
-        emojis: "frequent"
-      }
-    };
-  }
-
-  getTone() {
-    return this.traits[this.tone] || this.traits.professional;
-  }
-}
-
-const personality = new PersonalitySystem();
-
-// 5. ANALYTICS SYSTEM
-class AnalyticsSystem {
-  async trackSession(userId, action, details = {}) {
-    try {
-      const user = await getUser(userId);
-      // Track drop-off patterns
-      if (action === 'dropoff') {
-        user.dropOffCount = (user.dropOffCount || 0) + 1;
-        await updateStats('dropoff');
-      }
-      if (action === 'weakspot' && details.topic) {
-        if (!user.weakSpots) user.weakSpots = [];
-        user.weakSpots.push({ topic: details.topic, timestamp: Date.now() });
-        await updateStats('weakspot', { topic: details.topic });
-      }
-      await saveUser(user);
-    } catch (error) {
-      console.error("❌ Analytics error:", error);
-    }
-  }
-
-  async getStats() {
-    try {
-      const stats = await Stats.findOne();
-      const users = await User.find({});
-      const activeUsers = users.filter(u => {
-        const days = (Date.now() - new Date(u.lastActive).getTime()) / (1000 * 60 * 60 * 24);
-        return days < 7;
-      });
-      return {
-        totalUsers: stats?.totalUsers || 0,
-        totalMessages: stats?.totalMessages || 0,
-        totalImages: stats?.totalImages || 0,
-        totalVideos: stats?.totalVideos || 0,
-        dropOffs: stats?.dropOffs || 0,
-        activeUsers: activeUsers.length,
-        weakSpots: stats?.weakSpots || {}
-      };
-    } catch (error) {
-      console.error("❌ Get stats error:", error);
-      return { totalUsers: 0, totalMessages: 0 };
-    }
-  }
-}
-
-const analytics = new AnalyticsSystem();
-
-// 6. RATE LIMITER
-class RateLimiter {
-  constructor() {
-    this.requests = {};
-    this.tokens = {};
-  }
-
-  check(userId, tokens = 100) {
-    const now = Date.now();
-    const minute = 60000;
-
-    if (!this.requests[userId]) {
-      this.requests[userId] = [];
-    }
-    this.requests[userId] = this.requests[userId].filter(time => now - time < minute);
-    
-    if (this.requests[userId].length >= ENTERPRISE.rateLimits.maxRequestsPerMinute) {
-      return { allowed: false, reason: "Too many requests. Please wait." };
-    }
-
-    if (!this.tokens[userId]) {
-      this.tokens[userId] = [];
-    }
-    this.tokens[userId] = this.tokens[userId].filter(time => now - time < minute);
-    
-    const totalTokens = this.tokens[userId].reduce((sum, t) => sum + t, 0);
-    if (totalTokens + tokens > ENTERPRISE.rateLimits.maxTokensPerMinute) {
-      return { allowed: false, reason: "Token limit exceeded. Please wait." };
-    }
-
-    this.requests[userId].push(now);
-    this.tokens[userId].push(tokens);
-    
-    return { allowed: true };
-  }
-}
-
-const rateLimiter = new RateLimiter();
 
 // ================= QUOTA MANAGEMENT =================
 const DAILY_LIMIT = 15;
@@ -539,15 +222,6 @@ function incrementQuota(userId) {
     userRequests[userId] = { date: new Date().toDateString(), count: 0 };
   }
   userRequests[userId].count++;
-}
-
-function getFallbackResponse() {
-  const responses = [
-    "🐺 *Alpha AI Pro is currently at capacity. Please try again in a few minutes.*\n\n_This helps ensure fair usage for all users._",
-    "🐺 *The AI is taking a quick break. Please try again shortly.*\n\n_We appreciate your patience!_",
-    "🐺 *High demand right now. Please wait a moment before trying again.*\n\n_Thank you for using Alpha AI Pro!_"
-  ];
-  return responses[Math.floor(Math.random() * responses.length)];
 }
 
 // ================= INITIALIZE AI =================
@@ -598,6 +272,157 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   }
 });
 
+// ================= ATTRACTIVE MEDIA FUNCTIONS =================
+function getCategoryEmoji(category) {
+  const emojis = {
+    'Action': '⚔️',
+    'Adventure': '🗺️',
+    'Animation': '🎨',
+    'Comedy': '😂',
+    'Crime': '🔫',
+    'Drama': '🎭',
+    'Fantasy': '🐉',
+    'Horror': '👻',
+    'Romance': '❤️',
+    'Sci-Fi': '🚀',
+    'Thriller': '🔪',
+    'Western': '🤠',
+    'Historical': '🏰',
+    'Family': '👨‍👩‍👧‍👦'
+  };
+  return emojis[category] || '🎬';
+}
+
+function formatMediaCard(item, type) {
+  const emoji = type === 'movie' ? '🎬' : type === 'tv' ? '📺' : type === 'kdrama' ? '🇰🇷' : '🇹🇷';
+  const typeName = type === 'movie' ? 'Movie' : type === 'tv' ? 'TV Series' : type === 'kdrama' ? 'K-Drama' : 'Turkish Series';
+  
+  let card = `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
+  card += `┃ ${emoji} *${item.title}*\n`;
+  card += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
+  card += `┃ 📅 Year: ${item.year}\n`;
+  card += `┃ 📋 Type: ${typeName}\n`;
+  card += `┃ ⭐ Rating: ${item.rating}/10\n`;
+  
+  if (item.genre) {
+    const genreEmoji = getCategoryEmoji(item.genre);
+    card += `┃ 🎭 Genre: ${genreEmoji} ${item.genre}\n`;
+  }
+  if (item.seasons) {
+    card += `┃ 📅 Seasons: ${item.seasons}\n`;
+  }
+  if (item.episodes) {
+    card += `┃ 📅 Episodes: ${item.episodes}\n`;
+  }
+  
+  card += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
+  card += `┃ 📥 [⬇️ Download Now](${item.download})\n`;
+  card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
+  
+  return card;
+}
+
+function formatMediaList(items, title, emoji) {
+  if (items.length === 0) return `❌ No results found.`;
+  
+  let message = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  message += `   ${emoji} *${title}* (${items.length})\n`;
+  message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  // Show first 15 items, then "more" button
+  const showItems = items.slice(0, 15);
+  for (const item of showItems) {
+    const type = item.type || 'movie';
+    const emojiIcon = type === 'movie' ? '🎬' : type === 'tv' ? '📺' : type === 'kdrama' ? '🇰🇷' : '🇹🇷';
+    const genreEmoji = item.genre ? getCategoryEmoji(item.genre) : '';
+    
+    message += `${emojiIcon} *${item.title}* (${item.year}) ⭐${item.rating}\n`;
+    if (item.genre) message += `   ${genreEmoji} ${item.genre}\n`;
+    if (item.seasons) message += `   📅 ${item.seasons} Seasons\n`;
+    if (item.episodes) message += `   📅 ${item.episodes} Episodes\n`;
+    message += `   📥 [Download](${item.download})\n\n`;
+  }
+  
+  if (items.length > 15) {
+    message += `_... and ${items.length - 15} more. Use Search to find specific titles._\n`;
+  }
+  
+  return message;
+}
+
+function searchMedia(query, type = 'all') {
+  const results = [];
+  const q = query.toLowerCase();
+  
+  // Search Movies
+  if (type === 'all' || type === 'movies') {
+    for (const movie of MEDIA_DB.movies) {
+      if (movie.title.toLowerCase().includes(q) || (movie.genre && movie.genre.toLowerCase().includes(q))) {
+        results.push({ ...movie, type: 'movie' });
+      }
+    }
+  }
+  
+  // Search TV Series
+  if (type === 'all' || type === 'tv') {
+    for (const series of MEDIA_DB.tvSeries) {
+      if (series.title.toLowerCase().includes(q)) {
+        results.push({ ...series, type: 'tv' });
+      }
+    }
+  }
+  
+  // Search K-Dramas
+  if (type === 'all' || type === 'kdrama') {
+    for (const drama of MEDIA_DB.kdramas) {
+      if (drama.title.toLowerCase().includes(q)) {
+        results.push({ ...drama, type: 'kdrama' });
+      }
+    }
+  }
+  
+  // Search Turkish Series
+  if (type === 'all' || type === 'turkish') {
+    for (const series of MEDIA_DB.turkishSeries) {
+      if (series.title.toLowerCase().includes(q)) {
+        results.push({ ...series, type: 'turkish' });
+      }
+    }
+  }
+  
+  return results;
+}
+
+function getRandomMedia() {
+  const all = [
+    ...MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' })),
+    ...MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' })),
+    ...MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' })),
+    ...MEDIA_DB.turkishSeries.map(m => ({ ...m, type: 'turkish' }))
+  ];
+  return all[Math.floor(Math.random() * all.length)];
+}
+
+function getMediaByGenre(genre, type = 'all') {
+  const results = [];
+  const g = genre.toLowerCase();
+  
+  const allItems = [
+    ...MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' })),
+    ...MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' })),
+    ...MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' })),
+    ...MEDIA_DB.turkishSeries.map(m => ({ ...m, type: 'turkish' }))
+  ];
+  
+  for (const item of allItems) {
+    if (item.genre && item.genre.toLowerCase().includes(g)) {
+      results.push(item);
+    }
+  }
+  
+  return results;
+}
+
 // ================= DEVELOPER INFO =================
 function getDeveloperInfo() {
   return `👑 **Alpha AI Pro - Developer**\n\n` +
@@ -620,86 +445,17 @@ function isDeveloperQuestion(text) {
   return DEVELOPER_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-// ================= GROUNDING: REAL-TIME SEARCH =================
-async function searchWeb(query) {
-  try {
-    const searchUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json`;
-    const response = await axios.get(searchUrl, { timeout: 5000 });
-    if (response.data && response.data.AbstractText) {
-      return {
-        content: response.data.AbstractText,
-        source: response.data.AbstractURL || "DuckDuckGo",
-        citation: response.data.AbstractURL
-      };
-    }
-    return null;
-  } catch (error) {
-    console.error("❌ Search error:", error.message);
-    return null;
-  }
-}
-
-// ================= IMAGE GENERATION =================
-async function generateImage(prompt, userId) {
-  try {
-    const user = await getUser(userId);
-    const isPremium = user.premium || user.isAdmin;
-    
-    if (!isPremium && user.imagesGenerated >= 2) {
-      return { error: "⚠️ Free limit reached. Upgrade to Alpha Pro for unlimited images!" };
-    }
-    
-    console.log(`🖼️ Generating image: "${prompt.substring(0, 50)}..."`);
-    
-    const encodedPrompt = encodeURIComponent(prompt);
-    const imageUrl = `https://pollinations.ai/p/${encodedPrompt}?width=1024&height=768&model=flux&nologo=true`;
-    
-    const response = await axios.get(imageUrl, { 
-      responseType: 'arraybuffer',
-      timeout: 30000
-    });
-    
-    const imageBuffer = Buffer.from(response.data);
-    
-    user.imagesGenerated = (user.imagesGenerated || 0) + 1;
-    await saveUser(user);
-    await updateStats('image');
-    
-    return { 
-      buffer: imageBuffer, 
-      description: `✨ "${prompt}"`
-    };
-    
-  } catch (error) {
-    console.error("❌ Image generation error:", error.message);
-    return { error: "⚠️ Failed to generate image. Please try again." };
-  }
-}
-
-// ================= FALLBACK SYSTEM =================
-async function generateFallbackResponse(userId, originalPrompt) {
-  const tone = personality.getTone();
-  
-  const fallbackMessages = [
-    `${tone.greeting}! I want to make sure I give you the best answer possible. Could you help me understand better?`,
-    `I'm not entirely sure about that. Could you rephrase or add more context?`,
-    `That's an interesting question! Let me think... Could you tell me more specifically what you'd like to know?`
-  ];
-  
-  await analytics.trackSession(userId, 'dropoff');
-  
-  return fallbackMessages[Math.floor(Math.random() * fallbackMessages.length)];
-}
-
-// ================= KEYBOARD BUTTONS =================
+// ================= ATTRACTIVE KEYBOARD BUTTONS =================
 function getMainKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: '💬 Chat' }, { text: '🖼️ Image' }, { text: '📸 Photo' }],
-        [{ text: '🎬 Video' }, { text: '🎨 Design' }, { text: '👑 Developer' }],
-        [{ text: '📊 Status' }, { text: '💎 Pro' }, { text: '🔄 Reset' }],
-        [{ text: '❓ Help' }, { text: '📈 Analytics' }]
+        [{ text: '🎬 Movies' }, { text: '📺 TV Series' }, { text: '🇰🇷 K-Drama' }],
+        [{ text: '🇹🇷 Turkish Series' }, { text: '🎲 Random Pick' }, { text: '🔍 Search' }],
+        [{ text: '⚔️ Action' }, { text: '❤️ Romance' }, { text: '😂 Comedy' }],
+        [{ text: '🎭 Drama' }, { text: '🚀 Sci-Fi' }, { text: '👻 Horror' }],
+        [{ text: '💬 Chat' }, { text: '👑 Developer' }, { text: '📊 Status' }],
+        [{ text: '💎 Pro' }, { text: '🔄 Reset' }, { text: '❓ Help' }]
       ],
       resize_keyboard: true,
       one_time_keyboard: false
@@ -707,11 +463,12 @@ function getMainKeyboard() {
   };
 }
 
-function getChatKeyboard() {
+function getMediaKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: '💬 New Chat' }, { text: '🔄 Reset Chat' }],
+        [{ text: '🎬 Movies' }, { text: '📺 TV Series' }, { text: '🇰🇷 K-Drama' }],
+        [{ text: '🇹🇷 Turkish Series' }, { text: '🎲 Random Pick' }, { text: '🔍 Search' }],
         [{ text: '🔙 Main Menu' }]
       ],
       resize_keyboard: true
@@ -719,11 +476,12 @@ function getChatKeyboard() {
   };
 }
 
-function getImageKeyboard() {
+function getGenreKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: '🌅 Generate Image' }, { text: '🎨 Random Art' }],
+        [{ text: '⚔️ Action' }, { text: '❤️ Romance' }, { text: '😂 Comedy' }],
+        [{ text: '🎭 Drama' }, { text: '🚀 Sci-Fi' }, { text: '👻 Horror' }],
         [{ text: '🔙 Main Menu' }]
       ],
       resize_keyboard: true
@@ -741,33 +499,207 @@ bot.onText(/\/start|\/menu|🔙 Main Menu/, async (msg) => {
   const isPremium = user.premium || user.isAdmin;
   const status = isPremium ? '💎 Alpha Pro' : '🆓 Free';
   
-  // Load memory
-  const memory = await memorySystem.recallAll(userId);
-  const memoryCount = Object.keys(memory).length;
+  const totalMovies = MEDIA_DB.movies.length;
+  const totalTV = MEDIA_DB.tvSeries.length;
+  const totalKDrama = MEDIA_DB.kdramas.length;
+  const totalTurkish = MEDIA_DB.turkishSeries ? MEDIA_DB.turkishSeries.length : 0;
+  const total = totalMovies + totalTV + totalKDrama + totalTurkish;
   
   await bot.sendMessage(
     chatId,
-    `🐺 **Alpha AI Pro - Enterprise Edition**\n\n` +
+    `🎬 **ALPHA CINEMA** 🎬\n\n` +
     `👤 Status: ${status}\n` +
     `📊 Messages: ${user.requests || 0}\n` +
     `🖼️ Images: ${user.imagesGenerated || 0}\n` +
-    `🪙 Coins: ${user.coins || 0}\n` +
-    `🧠 Memories: ${memoryCount}\n\n` +
-    `━━━━━━━━━━━━━━━━━━━\n` +
-    `🧠 **Enterprise Features:**\n` +
-    `• Memory: Cross-session recall\n` +
-    `• Multi-Modal: Text + Image + File\n` +
-    `• Grounding: Real-time search + citations\n` +
-    `• Guardrails: Safety + jailbreak detection\n` +
-    `• Fallback: Graceful + human handoff\n` +
-    `• Personality: Consistent tone\n` +
-    `• Clarification: Smart questions\n` +
-    `• Analytics: Drop-off tracking\n` +
-    `• Rate Limits: Usage throttling\n` +
-    `━━━━━━━━━━━━━━━━━━━\n\n` +
-    `📌 **Use the buttons below:**`,
+    `📥 Downloads: ${user.downloads || 0}\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `📚 **MEDIA LIBRARY**\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🎬 Movies: ${totalMovies}\n` +
+    `📺 TV Series: ${totalTV}\n` +
+    `🇰🇷 K-Dramas: ${totalKDrama}\n` +
+    `🇹🇷 Turkish Series: ${totalTurkish}\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `📊 Total: ${total} titles\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `💬 *Send any message to chat with AI*\n` +
+    `📌 *Use the buttons below to browse:*`,
     { parse_mode: "Markdown", ...getMainKeyboard() }
   );
+});
+
+// Movies Button
+bot.onText(/🎬 Movies/, async (msg) => {
+  const chatId = msg.chat.id;
+  const items = MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' }));
+  const message = formatMediaList(items, 'Movies Library', '🎬');
+  
+  await bot.sendMessage(
+    chatId,
+    message,
+    { parse_mode: "Markdown", disable_web_page_preview: true, ...getMediaKeyboard() }
+  );
+});
+
+// TV Series Button
+bot.onText(/📺 TV Series/, async (msg) => {
+  const chatId = msg.chat.id;
+  const items = MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' }));
+  const message = formatMediaList(items, 'TV Series Library', '📺');
+  
+  await bot.sendMessage(
+    chatId,
+    message,
+    { parse_mode: "Markdown", disable_web_page_preview: true, ...getMediaKeyboard() }
+  );
+});
+
+// K-Drama Button
+bot.onText(/🇰🇷 K-Drama/, async (msg) => {
+  const chatId = msg.chat.id;
+  const items = MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' }));
+  const message = formatMediaList(items, 'K-Drama Library', '🇰🇷');
+  
+  await bot.sendMessage(
+    chatId,
+    message,
+    { parse_mode: "Markdown", disable_web_page_preview: true, ...getMediaKeyboard() }
+  );
+});
+
+// Turkish Series Button
+bot.onText(/🇹🇷 Turkish Series/, async (msg) => {
+  const chatId = msg.chat.id;
+  const items = MEDIA_DB.turkishSeries.map(m => ({ ...m, type: 'turkish' }));
+  const message = formatMediaList(items, 'Turkish Series Library', '🇹🇷');
+  
+  await bot.sendMessage(
+    chatId,
+    message,
+    { parse_mode: "Markdown", disable_web_page_preview: true, ...getMediaKeyboard() }
+  );
+});
+
+// Search Button
+bot.onText(/🔍 Search/, async (msg) => {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(
+    chatId,
+    `🔍 **Search Media**\n\n` +
+    `Send me a search query like:\n` +
+    `• "Godfather" - Search movies\n` +
+    `• "Game of Thrones" - Search TV series\n` +
+    `• "Squid Game" - Search K-Dramas\n` +
+    `• "Diriliş" - Search Turkish series\n` +
+    `• "Action" - Search by genre\n\n` +
+    `*Type your search query now!*`,
+    { parse_mode: "Markdown", ...getMediaKeyboard() }
+  );
+});
+
+// Random Pick Button
+bot.onText(/🎲 Random Pick/, async (msg) => {
+  const chatId = msg.chat.id;
+  const random = getRandomMedia();
+  
+  const emojis = { movie: '🎬', tv: '📺', kdrama: '🇰🇷', turkish: '🇹🇷' };
+  const types = { movie: 'Movie', tv: 'TV Series', kdrama: 'K-Drama', turkish: 'Turkish Series' };
+  
+  let message = `🎲 **Random Pick**\n\n`;
+  message += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
+  message += `┃ ${emojis[random.type]} *${random.title}*\n`;
+  message += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
+  message += `┃ 📅 Year: ${random.year}\n`;
+  message += `┃ 📋 Type: ${types[random.type]}\n`;
+  message += `┃ ⭐ Rating: ${random.rating}/10\n`;
+  
+  if (random.genre) {
+    const genreEmoji = getCategoryEmoji(random.genre);
+    message += `┃ 🎭 Genre: ${genreEmoji} ${random.genre}\n`;
+  }
+  if (random.seasons) {
+    message += `┃ 📅 Seasons: ${random.seasons}\n`;
+  }
+  if (random.episodes) {
+    message += `┃ 📅 Episodes: ${random.episodes}\n`;
+  }
+  
+  message += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
+  message += `┃ 📥 [⬇️ Download Now](${random.download})\n`;
+  message += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
+  
+  await bot.sendMessage(
+    chatId,
+    message,
+    { parse_mode: "Markdown", disable_web_page_preview: true, ...getMediaKeyboard() }
+  );
+});
+
+// Genre Buttons
+bot.onText(/⚔️ Action/, async (msg) => {
+  const chatId = msg.chat.id;
+  const results = getMediaByGenre('action');
+  if (results.length === 0) {
+    await bot.sendMessage(chatId, `❌ No Action titles found.`, { ...getGenreKeyboard() });
+    return;
+  }
+  const message = formatMediaList(results, 'Action Movies & Series', '⚔️');
+  await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true, ...getGenreKeyboard() });
+});
+
+bot.onText(/❤️ Romance/, async (msg) => {
+  const chatId = msg.chat.id;
+  const results = getMediaByGenre('romance');
+  if (results.length === 0) {
+    await bot.sendMessage(chatId, `❌ No Romance titles found.`, { ...getGenreKeyboard() });
+    return;
+  }
+  const message = formatMediaList(results, 'Romance Movies & Series', '❤️');
+  await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true, ...getGenreKeyboard() });
+});
+
+bot.onText(/😂 Comedy/, async (msg) => {
+  const chatId = msg.chat.id;
+  const results = getMediaByGenre('comedy');
+  if (results.length === 0) {
+    await bot.sendMessage(chatId, `❌ No Comedy titles found.`, { ...getGenreKeyboard() });
+    return;
+  }
+  const message = formatMediaList(results, 'Comedy Movies & Series', '😂');
+  await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true, ...getGenreKeyboard() });
+});
+
+bot.onText(/🎭 Drama/, async (msg) => {
+  const chatId = msg.chat.id;
+  const results = getMediaByGenre('drama');
+  if (results.length === 0) {
+    await bot.sendMessage(chatId, `❌ No Drama titles found.`, { ...getGenreKeyboard() });
+    return;
+  }
+  const message = formatMediaList(results, 'Drama Movies & Series', '🎭');
+  await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true, ...getGenreKeyboard() });
+});
+
+bot.onText(/🚀 Sci-Fi/, async (msg) => {
+  const chatId = msg.chat.id;
+  const results = getMediaByGenre('sci-fi');
+  if (results.length === 0) {
+    await bot.sendMessage(chatId, `❌ No Sci-Fi titles found.`, { ...getGenreKeyboard() });
+    return;
+  }
+  const message = formatMediaList(results, 'Sci-Fi Movies & Series', '🚀');
+  await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true, ...getGenreKeyboard() });
+});
+
+bot.onText(/👻 Horror/, async (msg) => {
+  const chatId = msg.chat.id;
+  const results = getMediaByGenre('horror');
+  if (results.length === 0) {
+    await bot.sendMessage(chatId, `❌ No Horror titles found.`, { ...getGenreKeyboard() });
+    return;
+  }
+  const message = formatMediaList(results, 'Horror Movies & Series', '👻');
+  await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true, ...getGenreKeyboard() });
 });
 
 // Chat Button
@@ -776,97 +708,13 @@ bot.onText(/💬 Chat/, async (msg) => {
   await bot.sendMessage(
     chatId,
     `💬 **Chat Mode**\n\n` +
-    `Send me any message and I'll respond like a pro!\n\n` +
-    `🧠 **Enterprise Features Active:**\n` +
-    `• Memory: I remember our conversations\n` +
-    `• Clarification: I'll ask if unclear\n` +
-    `• Grounding: Live web search available\n` +
-    `• Guardrails: Security active\n\n` +
+    `Send me any message and I'll respond!\n\n` +
     `💡 Try asking:\n` +
     `• "Explain quantum computing"\n` +
     `• "Write a poem about AI"\n` +
     `• "Help me with my code"\n` +
-    `• "Search for latest AI news"\n\n` +
+    `• "Search for a movie called ..."\n\n` +
     `✨ *Type your message now!*`,
-    { parse_mode: "Markdown", ...getChatKeyboard() }
-  );
-});
-
-// Image Button
-bot.onText(/🖼️ Image/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = await getUser(userId);
-  const isPremium = user.premium || user.isAdmin;
-  const remaining = Math.max(0, 2 - (user.imagesGenerated || 0));
-  
-  await bot.sendMessage(
-    chatId,
-    `🖼️ **Image Generator**\n\n` +
-    `Describe the image you want to create.\n\n` +
-    `💡 Examples:\n` +
-    `• "A futuristic city at sunset"\n` +
-    `• "A cute cat with a crown"\n` +
-    `• "Abstract art with vibrant colors"\n` +
-    `• "A spaceship flying through space"\n\n` +
-    `${isPremium ? '💎 Unlimited' : `🆓 ${remaining} free left`}\n\n` +
-    `*Send your image description now!*`,
-    { parse_mode: "Markdown", ...getImageKeyboard() }
-  );
-});
-
-// Photo Button
-bot.onText(/📸 Photo/, async (msg) => {
-  const chatId = msg.chat.id;
-  await bot.sendMessage(
-    chatId,
-    `📸 **Photo Editing**\n\n` +
-    `Send me a photo and tell me what to do!\n\n` +
-    `**Available effects:**\n` +
-    `• Brightness - Make it brighter\n` +
-    `• Contrast - More contrast\n` +
-    `• Blur - Soften the image\n` +
-    `• Grayscale - Black & white\n` +
-    `• Sepia - Vintage look\n` +
-    `• Rotate - Turn the image\n` +
-    `• Vintage - Old photo effect\n` +
-    `• Vibrant - Boost colors\n\n` +
-    `*Send a photo and tell me the effect!*`,
-    { parse_mode: "Markdown" }
-  );
-});
-
-// Video Button
-bot.onText(/🎬 Video/, async (msg) => {
-  const chatId = msg.chat.id;
-  await bot.sendMessage(
-    chatId,
-    `🎬 **Video Processing**\n\n` +
-    `Send me a video and tell me what to do!\n\n` +
-    `**Available actions:**\n` +
-    `• Trim - Cut video length\n` +
-    `• Convert - Change format\n` +
-    `• Resize - Change size\n` +
-    `• Speed - Faster/slower\n\n` +
-    `*Send a video and tell me what to do!*`,
-    { parse_mode: "Markdown" }
-  );
-});
-
-// Design Button
-bot.onText(/🎨 Design/, async (msg) => {
-  const chatId = msg.chat.id;
-  await bot.sendMessage(
-    chatId,
-    `🎨 **Design Tools**\n\n` +
-    `Tell me what design you want!\n\n` +
-    `**Available designs:**\n` +
-    `• Poster - Create a poster\n` +
-    `• Logo - Design a logo\n` +
-    `• Banner - Make a banner\n` +
-    `• Meme - Create a meme\n` +
-    `• Infographic - Data visualization\n\n` +
-    `*Describe your design!*`,
     { parse_mode: "Markdown" }
   );
 });
@@ -888,8 +736,6 @@ bot.onText(/📊 Status/, async (msg) => {
   const user = await getUser(userId);
   const isPremium = user.premium || user.isAdmin;
   const days = Math.floor((Date.now() - new Date(user.joinedDate).getTime()) / (1000 * 60 * 60 * 24));
-  const memory = await memorySystem.recallAll(userId);
-  const memoryCount = Object.keys(memory).length;
   
   await bot.sendMessage(
     chatId,
@@ -898,8 +744,8 @@ bot.onText(/📊 Status/, async (msg) => {
     `💎 Plan: ${isPremium ? 'Alpha Pro' : 'Free'}\n` +
     `📊 Messages: ${user.requests || 0}\n` +
     `🖼️ Images: ${user.imagesGenerated || 0}\n` +
+    `📥 Downloads: ${user.downloads || 0}\n` +
     `🪙 Coins: ${user.coins || 0}\n` +
-    `🧠 Memories: ${memoryCount}\n` +
     `📅 Days Active: ${days}\n\n` +
     `${isPremium ? '🎉 Enjoy unlimited access!' : '💎 Upgrade with the Pro button'}`,
     { parse_mode: "Markdown" }
@@ -929,7 +775,7 @@ bot.onText(/💎 Pro/, async (msg) => {
           currency: "usd",
           product_data: {
             name: "Alpha AI Pro - Premium",
-            description: "Unlimited AI chat, images & more"
+            description: "Unlimited AI chat, images & media downloads"
           },
           unit_amount: 500,
         },
@@ -948,9 +794,7 @@ bot.onText(/💎 Pro/, async (msg) => {
       `**✨ Pro Features:**\n` +
       `• Unlimited AI Chat\n` +
       `• Unlimited Images\n` +
-      `• Unlimited Photo Editing\n` +
-      `• Unlimited Video Processing\n` +
-      `• Advanced Design Tools\n` +
+      `• Unlimited Media Downloads\n` +
       `• Priority Support\n\n` +
       `*Upgrade now and unlock full power!*`,
       { parse_mode: "Markdown" }
@@ -961,7 +805,7 @@ bot.onText(/💎 Pro/, async (msg) => {
 });
 
 // Reset Button
-bot.onText(/🔄 Reset|🔄 Reset Chat/, async (msg) => {
+bot.onText(/🔄 Reset/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = await getUser(userId);
@@ -980,187 +824,53 @@ bot.onText(/❓ Help/, async (msg) => {
   await bot.sendMessage(
     chatId,
     `📖 **Alpha AI Pro - Help**\n\n` +
-    `**🤖 AI Chat**\n` +
-    `• Click "💬 Chat" or type any message\n\n` +
-    `**🖼️ Image Generation**\n` +
-    `• Click "🖼️ Image" and describe what you want\n\n` +
-    `**📸 Photo Editing**\n` +
-    `• Send a photo and tell me the effect\n\n` +
-    `**🎬 Video Processing**\n` +
-    `• Send a video and tell me what to do\n\n` +
-    `**🎨 Design Tools**\n` +
-    `• Describe the design you want\n\n` +
-    `**💎 Alpha Pro**\n` +
-    `• Click "💎 Pro" to upgrade\n\n` +
-    `**👑 Developer**\n` +
-    `• Click "👑 Developer" to learn about the creator\n\n` +
-    `**📈 Analytics**\n` +
-    `• Click "📈 Analytics" for system stats\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🎬 **Media Library**\n` +
+    `• Click category buttons to browse\n` +
+    `• Use "🔍 Search" to find specific titles\n` +
+    `• "🎲 Random Pick" for suggestions\n` +
+    `• Genre buttons for quick filtering\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🤖 **AI Chat**\n` +
+    `• Click "💬 Chat" or type any message\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `💎 **Alpha Pro**\n` +
+    `• Click "💎 Pro" to upgrade\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `**Free Limits:**\n` +
     `• 5 messages\n` +
-    `• 2 images\n\n` +
+    `• 2 images\n` +
+    `• Unlimited media browsing\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `**Alpha Pro:**\n` +
     `• Unlimited everything! 🚀`,
     { parse_mode: "Markdown" }
   );
 });
 
-// Analytics Button
-bot.onText(/📈 Analytics/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = await getUser(userId);
-  
-  if (!user.isAdmin && !user.premium) {
-    await bot.sendMessage(
-      chatId,
-      `📈 **Analytics**\n\n` +
-      `This feature is available for Premium and Admin users only.\n\n` +
-      `💎 Upgrade to Alpha Pro to access analytics!`
-    );
-    return;
-  }
-  
-  const stats = await analytics.getStats();
-  await bot.sendMessage(
-    chatId,
-    `📈 **Analytics Dashboard**\n\n` +
-    `👥 **Total Users:** ${stats.totalUsers}\n` +
-    `💬 **Total Messages:** ${stats.totalMessages}\n` +
-    `🖼️ **Images Generated:** ${stats.totalImages}\n` +
-    `🎬 **Videos Processed:** ${stats.totalVideos}\n` +
-    `🟢 **Active Users (7d):** ${stats.activeUsers}\n` +
-    `📉 **Drop-offs:** ${stats.dropOffs}\n` +
-    `🔴 **Weak Spots:** ${Object.keys(stats.weakSpots).length > 0 ? Object.keys(stats.weakSpots).join(', ') : 'None detected'}\n\n` +
-    `📊 **System Status:**\n` +
-    `• Memory: ✅ Active\n` +
-    `• Guardrails: ✅ Active\n` +
-    `• Rate Limits: ✅ ${ENTERPRISE.rateLimits.maxRequestsPerMinute}/min\n` +
-    `• Personality: ${ENTERPRISE.personality.tone}\n` +
-    `• Grounding: ✅ Active\n` +
-    `• Clarification: ✅ Active\n\n` +
-    `🔄 *Analytics updated in real-time*`
-  );
-});
-
-// New Chat Button
-bot.onText(/💬 New Chat/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = await getUser(userId);
-  user.chatHistory = [];
-  await saveUser(user);
-  
-  await bot.sendMessage(
-    chatId,
-    `🔄 **New Chat Started!**\n\nSend any message to begin.`,
-    { ...getChatKeyboard() }
-  );
-});
-
-// Generate Image Button
-bot.onText(/🌅 Generate Image/, async (msg) => {
-  const chatId = msg.chat.id;
-  await bot.sendMessage(
-    chatId,
-    `🖼️ **Describe Your Image**\n\n` +
-    `Send me a detailed description of what you want to create.\n\n` +
-    `💡 Examples:\n` +
-    `• "A cyberpunk city with neon lights"\n` +
-    `• "A magical forest with glowing trees"\n` +
-    `• "A futuristic spaceship design"\n\n` +
-    `*Type your description now!*`,
-    { parse_mode: "Markdown" }
-  );
-});
-
-// Random Art Button
-bot.onText(/🎨 Random Art/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  
-  const randomPrompts = [
-    "A beautiful sunset over mountains with vibrant colors",
-    "A futuristic city with flying cars and neon lights",
-    "A magical forest with glowing mushrooms and fairies",
-    "An abstract digital art with flowing colors and shapes",
-    "A cosmic galaxy with stars and nebulas",
-    "A cyberpunk character with glowing neon elements"
-  ];
-  
-  const prompt = randomPrompts[Math.floor(Math.random() * randomPrompts.length)];
-  const result = await generateImage(prompt, userId);
-  
-  if (result.error) {
-    await bot.sendMessage(chatId, result.error);
-    return;
-  }
-  
-  const user = await getUser(userId);
-  await bot.sendPhoto(chatId, result.buffer, {
-    caption: `🎨 **Random Art**\n\n${result.description}\n\n🪙 Coins: ${user.coins || 0}`
-  });
-});
-
-// ================= MESSAGE HANDLER WITH ENTERPRISE FEATURES =================
+// ================= MESSAGE HANDLER =================
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const text = msg.text;
 
-  if (!text || text.startsWith("/") || text.startsWith("🔙") || text.startsWith("💬") || 
-      text.startsWith("🖼️") || text.startsWith("📸") || text.startsWith("🎬") || 
-      text.startsWith("🎨") || text.startsWith("👑") || text.startsWith("📊") || 
-      text.startsWith("💎") || text.startsWith("🔄") || text.startsWith("❓") ||
-      text.startsWith("🌅") || text.startsWith("🎨 Random") || text.startsWith("📈")) {
+  // Ignore button texts and commands
+  const buttonTexts = [
+    '🔙 Main Menu', '🎬 Movies', '📺 TV Series', '🇰🇷 K-Drama',
+    '🇹🇷 Turkish Series', '🔍 Search', '🎲 Random Pick',
+    '⚔️ Action', '❤️ Romance', '😂 Comedy', '🎭 Drama',
+    '🚀 Sci-Fi', '👻 Horror', '💬 Chat', '👑 Developer',
+    '📊 Status', '💎 Pro', '🔄 Reset', '❓ Help'
+  ];
+  
+  if (!text || text.startsWith("/") || buttonTexts.includes(text)) {
     return;
   }
 
   try {
     const user = await getUser(userId);
     
-    // 1. GUARDRAILS - Check for harmful content
-    const guardrailResult = guardrails.check(text);
-    if (guardrailResult.isHarmful) {
-      await bot.sendMessage(
-        chatId,
-        `🛡️ **Security Alert**\n\n` +
-        `Your message was flagged by our guardrails system.\n` +
-        `Please rephrase your question in a more appropriate manner.\n\n` +
-        `_If you believe this is an error, please contact support._`
-      );
-      await analytics.trackSession(userId, 'dropoff');
-      return;
-    }
-    
-    if (guardrailResult.isJailbreak) {
-      await bot.sendMessage(
-        chatId,
-        `🔒 **Security Warning**\n\n` +
-        `A potential jailbreak attempt was detected.\n` +
-        `For security reasons, I cannot respond to this request.\n\n` +
-        `_Please note: All interactions are logged for security purposes._`
-      );
-      await analytics.trackSession(userId, 'dropoff');
-      return;
-    }
-    
-    // 2. RATE LIMITS - Check usage
-    const rateCheck = rateLimiter.check(userId, text.length);
-    if (!rateCheck.allowed) {
-      await bot.sendMessage(
-        chatId,
-        `⏳ **Rate Limit Exceeded**\n\n` +
-        `${rateCheck.reason}\n\n` +
-        `Current limits:\n` +
-        `• ${ENTERPRISE.rateLimits.maxRequestsPerMinute} requests/min\n` +
-        `• ${ENTERPRISE.rateLimits.maxTokensPerMinute} tokens/min`
-      );
-      await analytics.trackSession(userId, 'dropoff');
-      return;
-    }
-    
-    // 3. CHECK FOR DEVELOPER QUESTION
+    // Check for developer question
     if (isDeveloperQuestion(text)) {
       await bot.sendMessage(
         chatId,
@@ -1170,81 +880,53 @@ bot.on("message", async (msg) => {
       return;
     }
     
-    // 4. MEMORY - Cross-session recall
-    const rememberedName = await memorySystem.recall(userId, 'name');
-    const rememberedProjects = await memorySystem.recall(userId, 'projects');
-    
-    let memoryContext = "";
-    if (rememberedName) {
-      memoryContext += `\nUser's name: ${rememberedName}`;
-    }
-    if (rememberedProjects) {
-      memoryContext += `\nUser's projects: ${rememberedProjects}`;
-    }
-    
-    // 5. MULTI-MODAL - Check if generating image
-    if (text.toLowerCase().includes('image') || 
-        text.toLowerCase().includes('picture') ||
-        text.toLowerCase().includes('draw') ||
-        text.toLowerCase().includes('create') ||
-        text.toLowerCase().includes('generate')) {
+    // Check if searching for media
+    if (text.toLowerCase().includes('search') || 
+        text.toLowerCase().includes('find') ||
+        text.toLowerCase().includes('looking for')) {
       
-      const isPremium = user.premium || user.isAdmin;
-      if (!isPremium && user.imagesGenerated >= 2) {
+      // Extract search query
+      let query = text.replace(/search|find|looking for|for|movie|series|drama|show/i, '').trim();
+      if (!query) {
         await bot.sendMessage(
           chatId,
-          `⚠️ **Image limit reached!**\n\n` +
-          `You've used all 2 free images.\n` +
-          `💎 Upgrade to Alpha Pro for unlimited!\n\n` +
-          `Use the "💎 Pro" button.`
+          `🔍 **What are you looking for?**\n\n` +
+          `Send me a title or genre to search.\n\n` +
+          `Examples:\n` +
+          `• "Godfather"\n` +
+          `• "Action movies"\n` +
+          `• "Turkish series"\n` +
+          `• "Romance K-Drama"`,
+          { parse_mode: "Markdown" }
         );
         return;
       }
       
-      const result = await generateImage(text, userId);
-      if (result.error) {
-        await bot.sendMessage(chatId, result.error);
+      const results = searchMedia(query);
+      if (results.length === 0) {
+        await bot.sendMessage(
+          chatId,
+          `❌ No results found for "${query}".\n\n` +
+          `Try a different search term or browse by category.`,
+          { parse_mode: "Markdown" }
+        );
         return;
       }
       
-      await bot.sendPhoto(chatId, result.buffer, {
-        caption: `🖼️ **Generated Image**\n\n${result.description}\n\n🪙 Coins: ${user.coins || 0}`
-      });
+      const message = formatMediaList(results, `Search Results for "${query}"`, '🔍');
+      await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true });
       return;
     }
     
-    // 6. CLARIFICATION - Check if needs clarification
-    if (ENTERPRISE.clarification.enabled && clarificationSystem.needsClarification(text)) {
-      const questions = clarificationSystem.generateQuestions(text);
-      await bot.sendMessage(
-        chatId,
-        `🤔 **Let me clarify**\n\n` +
-        `To give you the best answer, I need a bit more information:\n\n` +
-        questions.map((q, i) => `${i+1}. ${q}`).join('\n') + `\n\n` +
-        `*Please provide more details and I'll help you out!*`
-      );
+    // Check if it's a media title search
+    const results = searchMedia(text);
+    if (results.length > 0 && results.length < 10) {
+      const message = formatMediaList(results, `Results for "${text}"`, '🔍');
+      await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true });
       return;
     }
     
-    // 7. GROUNDING - Real-time search
-    let searchResult = null;
-    if (ENTERPRISE.grounding.enabled && 
-        (text.toLowerCase().includes('search') || 
-         text.toLowerCase().includes('latest') ||
-         text.toLowerCase().includes('news') ||
-         text.toLowerCase().includes('current'))) {
-      searchResult = await searchWeb(text);
-      if (searchResult) {
-        await bot.sendMessage(
-          chatId,
-          `🔍 **Live Search Results**\n\n` +
-          `${searchResult.content}\n\n` +
-          `📎 *Source: ${searchResult.source}*`
-        );
-      }
-    }
-    
-    // 8. REGULAR CHAT with ENTERPRISE CONTEXT
+    // Regular AI chat
     if (!aiReady) {
       await initializeAI();
       if (!aiReady) {
@@ -1266,75 +948,43 @@ bot.on("message", async (msg) => {
     }
 
     if (!checkQuota(userId)) {
-      const fallbackResponse = await generateFallbackResponse(userId, text);
-      await bot.sendMessage(chatId, fallbackResponse);
+      await bot.sendMessage(
+        chatId,
+        `🐺 *Alpha AI Pro is currently at capacity. Please try again in a few minutes.*`
+      );
       return;
     }
 
     await bot.sendChatAction(chatId, "typing");
 
-    // Store in memory
     user.chatHistory = user.chatHistory || [];
     user.chatHistory.push({ role: "user", content: text });
     user.requests = (user.requests || 0) + 1;
     user.totalMessages = (user.totalMessages || 0) + 1;
     incrementQuota(userId);
     await saveUser(user);
-    await updateStats('message');
 
-    // Store name in memory if mentioned
-    if (text.toLowerCase().includes('my name is')) {
-      const nameMatch = text.match(/my name is (\w+)/i);
-      if (nameMatch) {
-        await memorySystem.store(userId, 'name', nameMatch[1], 'high');
-        await bot.sendMessage(
-          chatId,
-          `📝 *I'll remember your name: ${nameMatch[1]}*`
-        );
-      }
+    if (user.chatHistory.length > (isPremium ? 50 : 10)) {
+      user.chatHistory = user.chatHistory.slice(-(isPremium ? 50 : 10));
     }
 
-    // Limit history
-    if (user.chatHistory.length > (isPremium ? 100 : 20)) {
-      user.chatHistory = user.chatHistory.slice(-(isPremium ? 100 : 20));
-    }
-
-    // Build context with memory
     let context = "";
     for (const entry of user.chatHistory) {
       context += `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.content}\n`;
     }
-    
-    if (memoryContext) {
-      context += `\n[Memory Context:${memoryContext}]\n`;
-    }
-    
-    if (searchResult) {
-      context += `\n[Live Search Data: ${searchResult.content.substring(0, 200)}...]\n`;
-    }
-
-    // Generate response with personality
-    const tone = personality.getTone();
-    const systemPrompt = `You are Alpha AI Pro, a professional AI assistant created by ${DEVELOPER.name} (@${DEVELOPER.username}). 
-    Your tone should be: ${tone.style}
-    You have access to the following context:
-    - User's conversation history
-    - Cross-session memory (if available)
-    - Real-time search results (if applicable)
-    
-    Provide clear, detailed, and helpful responses. Use appropriate formatting.
-    
-    ${tone.greeting}, I'm here to help!
-    
-    Conversation:
-    ${context}
-    
-    Assistant: Provide a professional, ${tone.style} response.`;
 
     const result = await aiProcessor.generateContent({
       contents: [{
         role: "user",
-        parts: [{ text: systemPrompt }]
+        parts: [{ 
+          text: `You are Alpha AI Pro, a professional AI assistant. 
+          Provide clear, detailed, and helpful responses. Use formatting when needed.
+          
+          Conversation:
+          ${context}
+          
+          Assistant: Provide a professional, detailed response.` 
+        }]
       }],
       generationConfig: {
         maxOutputTokens: isPremium ? 4096 : 2048,
@@ -1351,19 +1001,9 @@ bot.on("message", async (msg) => {
 
   } catch (error) {
     console.error("❌ Error:", error.message);
-    await analytics.trackSession(userId, 'dropoff');
-    
-    const fallbackQuestions = [
-      "Would you like to try rephrasing your question?",
-      "Can I help you with something else?",
-      "Would you like me to search for this information?"
-    ];
-    
     await bot.sendMessage(
       chatId,
-      `⚠️ I encountered an issue.\n\n` +
-      `${fallbackQuestions.join('\n')}\n\n` +
-      `_If this continues, please contact support._`
+      `⚠️ Error: ${error.message}\n\nPlease try again.`
     );
   }
 });
@@ -1385,15 +1025,12 @@ app.get("/success", async (req, res) => {
           userId,
           `💎 **Alpha AI Pro Unlocked!**\n\n` +
           `🎉 You now have unlimited access to all features!\n\n` +
-          `**Enterprise Features:**\n` +
-          `• 🧠 Cross-session Memory\n` +
-          `• 🌐 Real-time Search + Citations\n` +
-          `• 🛡️ Advanced Guardrails\n` +
-          `• 🎯 Smart Clarification\n` +
-          `• 📈 Analytics Dashboard\n` +
-          `• 🔒 Rate Limits Protection\n` +
-          `• 💬 Unlimited Everything\n\n` +
-          `🚀 *Enjoy the full power of Alpha AI Pro!*`
+          `**✨ Features:**\n` +
+          `• Unlimited AI Chat\n` +
+          `• Unlimited Images\n` +
+          `• Unlimited Media Downloads\n` +
+          `• Priority Support\n\n` +
+          `🚀 *Enjoy the full power!*`
         );
       }
     } catch (error) {
@@ -1410,23 +1047,14 @@ app.get("/success", async (req, res) => {
       .card { background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); padding: 40px; border-radius: 20px; max-width: 400px; margin: auto; }
       .emoji { font-size: 80px; }
       h1 { background: linear-gradient(135deg, #ffd700, #ff6b6b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-      .features { text-align: left; margin: 20px 0; color: #e0e0e0; }
-      .features li { list-style: none; padding: 5px 0; }
     </style>
     </head>
     <body>
       <div class="card">
-        <div class="emoji">🐺</div>
-        <h1>Alpha AI Pro Unlocked!</h1>
-        <p>Welcome to the Enterprise Club!</p>
-        <div class="features">
-          <li>✅ Cross-session Memory</li>
-          <li>✅ Real-time Search</li>
-          <li>✅ Advanced Guardrails</li>
-          <li>✅ Analytics Dashboard</li>
-          <li>✅ Unlimited Everything</li>
-        </div>
-        <p style="font-size: 0.9em; opacity: 0.8;">Close this window and return to Telegram</p>
+        <div class="emoji">🎬</div>
+        <h1>Alpha Cinema Pro Unlocked!</h1>
+        <p>Welcome to the Alpha Club!</p>
+        <p>Close this window and return to Telegram</p>
       </div>
     </body>
     </html>
@@ -1467,13 +1095,7 @@ app.get("/api/status", async (req, res) => {
       users: stats?.totalUsers || 0,
       totalMessages: stats?.totalMessages || 0,
       totalImages: stats?.totalImages || 0,
-      features: {
-        memory: ENTERPRISE.memory.enabled,
-        guardrails: ENTERPRISE.guardrails.enabled,
-        grounding: ENTERPRISE.grounding.enabled,
-        personality: ENTERPRISE.personality.tone,
-        rateLimits: `${ENTERPRISE.rateLimits.maxRequestsPerMinute}/min`
-      }
+      totalDownloads: stats?.totalDownloads || 0
     });
   } catch {
     res.json({
@@ -1485,21 +1107,15 @@ app.get("/api/status", async (req, res) => {
 
 // ================= START SERVER =================
 app.listen(PORT, async () => {
-  console.log(`🐺 Alpha AI Pro - Enterprise Edition`);
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🎬 Alpha Cinema Pro Server running on port ${PORT}`);
   console.log(`👑 Admin: ${ADMIN_IDS.join(', ')}`);
   console.log(`📊 Database: MongoDB`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`✅ Memory: Cross-session recall`);
-  console.log(`✅ Multi-Modal: Text + Image + File`);
-  console.log(`✅ Grounding: Real-time search`);
-  console.log(`✅ Guardrails: Safety + jailbreak`);
-  console.log(`✅ Fallback: Graceful + handoff`);
-  console.log(`✅ Personality: ${ENTERPRISE.personality.tone}`);
-  console.log(`✅ Clarification: Smart questions`);
-  console.log(`✅ Analytics: Drop-off tracking`);
-  console.log(`✅ Rate Limits: ${ENTERPRISE.rateLimits.maxRequestsPerMinute}/min`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`📚 Media Library:`);
+  console.log(`   🎬 Movies: ${MEDIA_DB.movies.length}`);
+  console.log(`   📺 TV Series: ${MEDIA_DB.tvSeries.length}`);
+  console.log(`   🇰🇷 K-Dramas: ${MEDIA_DB.kdramas.length}`);
+  console.log(`   🇹🇷 Turkish Series: ${MEDIA_DB.turkishSeries ? MEDIA_DB.turkishSeries.length : 0}`);
+  console.log(`   📊 Total: ${MEDIA_DB.movies.length + MEDIA_DB.tvSeries.length + MEDIA_DB.kdramas.length + (MEDIA_DB.turkishSeries ? MEDIA_DB.turkishSeries.length : 0)} titles`);
   await setWebhook();
   console.log(`✅ Bot ready!`);
 });
