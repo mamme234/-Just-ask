@@ -78,7 +78,7 @@ const UserSchema = new mongoose.Schema({
   memory: { type: Object, default: {} },
   lastActive: { type: Date, default: Date.now },
   downloads: { type: Number, default: 0 },
-  filmMode: { type: Boolean, default: false } // Track if user is in film download mode
+  filmMode: { type: Boolean, default: false }
 });
 
 const StatsSchema = new mongoose.Schema({
@@ -274,54 +274,16 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   }
 });
 
-// ================= ATTRACTIVE MEDIA FUNCTIONS =================
+// ================= MEDIA FUNCTIONS =================
 function getCategoryEmoji(category) {
   const emojis = {
-    'Action': '⚔️',
-    'Adventure': '🗺️',
-    'Animation': '🎨',
-    'Comedy': '😂',
-    'Crime': '🔫',
-    'Drama': '🎭',
-    'Fantasy': '🐉',
-    'Horror': '👻',
-    'Romance': '❤️',
-    'Sci-Fi': '🚀',
-    'Thriller': '🔪',
-    'Western': '🤠',
-    'Historical': '🏰',
-    'Family': '👨‍👩‍👧‍👦'
+    'Action': '⚔️', 'Adventure': '🗺️', 'Animation': '🎨',
+    'Comedy': '😂', 'Crime': '🔫', 'Drama': '🎭',
+    'Fantasy': '🐉', 'Horror': '👻', 'Romance': '❤️',
+    'Sci-Fi': '🚀', 'Thriller': '🔪', 'Western': '🤠',
+    'Historical': '🏰', 'Family': '👨‍👩‍👧‍👦'
   };
   return emojis[category] || '🎬';
-}
-
-function formatMediaCard(item, type) {
-  const emoji = type === 'movie' ? '🎬' : type === 'tv' ? '📺' : type === 'kdrama' ? '🇰🇷' : '🇹🇷';
-  const typeName = type === 'movie' ? 'Movie' : type === 'tv' ? 'TV Series' : type === 'kdrama' ? 'K-Drama' : 'Turkish Series';
-  
-  let card = `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
-  card += `┃ ${emoji} *${item.title}*\n`;
-  card += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
-  card += `┃ 📅 Year: ${item.year}\n`;
-  card += `┃ 📋 Type: ${typeName}\n`;
-  card += `┃ ⭐ Rating: ${item.rating}/10\n`;
-  
-  if (item.genre) {
-    const genreEmoji = getCategoryEmoji(item.genre);
-    card += `┃ 🎭 Genre: ${genreEmoji} ${item.genre}\n`;
-  }
-  if (item.seasons) {
-    card += `┃ 📅 Seasons: ${item.seasons}\n`;
-  }
-  if (item.episodes) {
-    card += `┃ 📅 Episodes: ${item.episodes}\n`;
-  }
-  
-  card += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
-  card += `┃ 📥 [⬇️ Download Now](${item.download})\n`;
-  card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
-  
-  return card;
 }
 
 function formatMediaList(items, title, emoji) {
@@ -351,35 +313,33 @@ function formatMediaList(items, title, emoji) {
   return message;
 }
 
-function searchMedia(query, type = 'all') {
+function searchMedia(query) {
   const results = [];
   const q = query.toLowerCase();
   
-  if (type === 'all' || type === 'movies') {
-    for (const movie of MEDIA_DB.movies) {
-      if (movie.title.toLowerCase().includes(q) || (movie.genre && movie.genre.toLowerCase().includes(q))) {
-        results.push({ ...movie, type: 'movie' });
-      }
+  // Search Movies
+  for (const movie of MEDIA_DB.movies) {
+    if (movie.title.toLowerCase().includes(q) || (movie.genre && movie.genre.toLowerCase().includes(q))) {
+      results.push({ ...movie, type: 'movie' });
     }
   }
   
-  if (type === 'all' || type === 'tv') {
-    for (const series of MEDIA_DB.tvSeries) {
-      if (series.title.toLowerCase().includes(q)) {
-        results.push({ ...series, type: 'tv' });
-      }
+  // Search TV Series
+  for (const series of MEDIA_DB.tvSeries) {
+    if (series.title.toLowerCase().includes(q)) {
+      results.push({ ...series, type: 'tv' });
     }
   }
   
-  if (type === 'all' || type === 'kdrama') {
-    for (const drama of MEDIA_DB.kdramas) {
-      if (drama.title.toLowerCase().includes(q)) {
-        results.push({ ...drama, type: 'kdrama' });
-      }
+  // Search K-Dramas
+  for (const drama of MEDIA_DB.kdramas) {
+    if (drama.title.toLowerCase().includes(q)) {
+      results.push({ ...drama, type: 'kdrama' });
     }
   }
   
-  if (type === 'all' || type === 'turkish') {
+  // Search Turkish Series
+  if (MEDIA_DB.turkishSeries) {
     for (const series of MEDIA_DB.turkishSeries) {
       if (series.title.toLowerCase().includes(q)) {
         results.push({ ...series, type: 'turkish' });
@@ -395,12 +355,12 @@ function getRandomMedia() {
     ...MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' })),
     ...MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' })),
     ...MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' })),
-    ...MEDIA_DB.turkishSeries.map(m => ({ ...m, type: 'turkish' }))
+    ...(MEDIA_DB.turkishSeries || []).map(m => ({ ...m, type: 'turkish' }))
   ];
   return all[Math.floor(Math.random() * all.length)];
 }
 
-function getMediaByGenre(genre, type = 'all') {
+function getMediaByGenre(genre) {
   const results = [];
   const g = genre.toLowerCase();
   
@@ -408,7 +368,7 @@ function getMediaByGenre(genre, type = 'all') {
     ...MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' })),
     ...MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' })),
     ...MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' })),
-    ...MEDIA_DB.turkishSeries.map(m => ({ ...m, type: 'turkish' }))
+    ...(MEDIA_DB.turkishSeries || []).map(m => ({ ...m, type: 'turkish' }))
   ];
   
   for (const item of allItems) {
@@ -420,7 +380,6 @@ function getMediaByGenre(genre, type = 'all') {
   return results;
 }
 
-// ================= DEVELOPER INFO =================
 function getDeveloperInfo() {
   return `👑 **Alpha AI Pro - Developer**\n\n` +
     `👤 **Name:** ${DEVELOPER.name}\n` +
@@ -442,7 +401,7 @@ function isDeveloperQuestion(text) {
   return DEVELOPER_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-// ================= FILM DOWNLOAD KEYBOARD =================
+// ================= KEYBOARDS =================
 function getFilmKeyboard() {
   return {
     reply_markup: {
@@ -451,7 +410,7 @@ function getFilmKeyboard() {
         [{ text: '🇹🇷 Turkish Series' }, { text: '🎲 Random Pick' }, { text: '🔍 Search Film' }],
         [{ text: '⚔️ Action' }, { text: '❤️ Romance' }, { text: '😂 Comedy' }],
         [{ text: '🎭 Drama' }, { text: '🚀 Sci-Fi' }, { text: '👻 Horror' }],
-        [{ text: '🔙 Back to Chat' }]
+        [{ text: '🔙 Exit Film Mode' }]
       ],
       resize_keyboard: true,
       one_time_keyboard: false
@@ -476,12 +435,11 @@ function getMainKeyboard() {
 // ================= COMMAND HANDLERS =================
 
 // Main Menu
-bot.onText(/\/start|\/menu|🔙 Back to Chat/, async (msg) => {
+bot.onText(/\/start|\/menu/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  // Turn off film mode
   user.filmMode = false;
   await saveUser(user);
   
@@ -505,13 +463,12 @@ bot.onText(/\/start|\/menu|🔙 Back to Chat/, async (msg) => {
   );
 });
 
-// Film Download Button - ENTER FILM MODE
+// ENTER FILM MODE
 bot.onText(/🎬 Film Download/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  // Turn on film mode
   user.filmMode = true;
   await saveUser(user);
   
@@ -540,13 +497,30 @@ bot.onText(/🎬 Film Download/, async (msg) => {
   );
 });
 
+// EXIT FILM MODE
+bot.onText(/🔙 Exit Film Mode/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
+  const user = await getUser(userId);
+  
+  user.filmMode = false;
+  await saveUser(user);
+  
+  await bot.sendMessage(
+    chatId,
+    `✅ **Exited Film Mode**\n\n` +
+    `You are now back in the main menu.\n\n` +
+    `📌 Choose an option:`,
+    { parse_mode: "Markdown", ...getMainKeyboard() }
+  );
+});
+
 // Movies Button (Film Mode)
 bot.onText(/🎬 Movies/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  // Check if in film mode
   if (!user.filmMode) {
     await bot.sendMessage(
       chatId,
@@ -559,10 +533,8 @@ bot.onText(/🎬 Movies/, async (msg) => {
   const items = MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' }));
   const message = formatMediaList(items, 'Movies Library', '🎬');
   
-  // Track download view
   user.downloads = (user.downloads || 0) + 1;
   await saveUser(user);
-  await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
   
   await bot.sendMessage(
     chatId,
@@ -591,7 +563,6 @@ bot.onText(/📺 TV Series/, async (msg) => {
   
   user.downloads = (user.downloads || 0) + 1;
   await saveUser(user);
-  await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
   
   await bot.sendMessage(
     chatId,
@@ -620,7 +591,6 @@ bot.onText(/🇰🇷 K-Drama/, async (msg) => {
   
   user.downloads = (user.downloads || 0) + 1;
   await saveUser(user);
-  await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
   
   await bot.sendMessage(
     chatId,
@@ -649,7 +619,6 @@ bot.onText(/🇹🇷 Turkish Series/, async (msg) => {
   
   user.downloads = (user.downloads || 0) + 1;
   await saveUser(user);
-  await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
   
   await bot.sendMessage(
     chatId,
@@ -733,7 +702,6 @@ bot.onText(/🎲 Random Pick/, async (msg) => {
   
   user.downloads = (user.downloads || 0) + 1;
   await saveUser(user);
-  await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
   
   await bot.sendMessage(
     chatId,
@@ -794,7 +762,6 @@ bot.onText(/💬 AI Chat/, async (msg) => {
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  // Turn off film mode
   user.filmMode = false;
   await saveUser(user);
   
@@ -805,8 +772,7 @@ bot.onText(/💬 AI Chat/, async (msg) => {
     `💡 Try asking:\n` +
     `• "Explain quantum computing"\n` +
     `• "Write a poem about AI"\n` +
-    `• "Help me with my code"\n` +
-    `• "What's the weather like?"\n\n` +
+    `• "Help me with my code"\n\n` +
     `✨ *Type your message now!*\n\n` +
     `📌 *To go back to films, click "🎬 Film Download"*`,
     { parse_mode: "Markdown", ...getMainKeyboard() }
@@ -852,10 +818,7 @@ bot.onText(/💎 Pro/, async (msg) => {
   const user = await getUser(userId);
   
   if (user.isAdmin) {
-    await bot.sendMessage(
-      chatId,
-      `👑 **Admin Access**\n\nYou already have Alpha Pro access!`
-    );
+    await bot.sendMessage(chatId, `👑 **Admin Access**\n\nYou already have Alpha Pro access!`);
     return;
   }
 
@@ -904,10 +867,7 @@ bot.onText(/🔄 Reset/, async (msg) => {
   user.chatHistory = [];
   await saveUser(user);
   
-  await bot.sendMessage(
-    chatId,
-    `🔄 **Reset Complete!**\n\nFresh start! Send any message.`
-  );
+  await bot.sendMessage(chatId, `🔄 **Reset Complete!**\n\nFresh start! Send any message.`);
 });
 
 // Help Button
@@ -940,21 +900,22 @@ bot.onText(/❓ Help/, async (msg) => {
   );
 });
 
-// ================= FILM SEARCH HANDLER (Film Mode Only) =================
+// ================= MAIN MESSAGE HANDLER =================
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const text = msg.text;
 
-  // Ignore button texts
+  // Ignore all button texts
   const buttonTexts = [
-    '🔙 Back to Chat', '🎬 Film Download', '🎬 Movies', '📺 TV Series', 
+    '🔙 Exit Film Mode', '🎬 Film Download', '🎬 Movies', '📺 TV Series', 
     '🇰🇷 K-Drama', '🇹🇷 Turkish Series', '🔍 Search Film', '🎲 Random Pick',
     '⚔️ Action', '❤️ Romance', '😂 Comedy', '🎭 Drama', '🚀 Sci-Fi', '👻 Horror',
-    '💬 AI Chat', '👑 Developer', '📊 Status', '💎 Pro', '🔄 Reset', '❓ Help'
+    '💬 AI Chat', '👑 Developer', '📊 Status', '💎 Pro', '🔄 Reset', '❓ Help',
+    '/start', '/menu'
   ];
   
-  if (!text || text.startsWith("/") || buttonTexts.includes(text)) {
+  if (!text || buttonTexts.includes(text) || text.startsWith("/")) {
     return;
   }
 
@@ -990,7 +951,7 @@ bot.on("message", async (msg) => {
           { parse_mode: "Markdown", ...getFilmKeyboard() }
         );
       }
-      return; // Don't process AI chat in film mode
+      return; // ⭐ IMPORTANT: Stop here, don't process AI chat
     }
     
     // ===== AI CHAT MODE =====
