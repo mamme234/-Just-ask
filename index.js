@@ -8,6 +8,7 @@ import path from "path";
 import { fileURLToPath } from 'url';
 import { createCanvas } from 'canvas';
 import mongoose from "mongoose";
+import fs from "fs";
 import { MEDIA_DB } from './mediaDB.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -78,7 +79,9 @@ const UserSchema = new mongoose.Schema({
   memory: { type: Object, default: {} },
   lastActive: { type: Date, default: Date.now },
   downloads: { type: Number, default: 0 },
-  filmMode: { type: Boolean, default: false }
+  filmMode: { type: Boolean, default: false },
+  currentPage: { type: Number, default: 0 },
+  currentCategory: { type: String, default: 'movies' }
 });
 
 const StatsSchema = new mongoose.Schema({
@@ -187,7 +190,9 @@ function getUserFallback(id) {
       joinedDate: new Date().toISOString(),
       memory: {},
       downloads: 0,
-      filmMode: false
+      filmMode: false,
+      currentPage: 0,
+      currentCategory: 'movies'
     };
   }
   return fallbackDB.users[userId];
@@ -286,68 +291,47 @@ function getCategoryEmoji(category) {
   return emojis[category] || '🎬';
 }
 
-function formatMediaList(items, title, emoji) {
-  if (items.length === 0) return `❌ No results found.`;
+function getItemsByCategory(category, page = 0, perPage = 5) {
+  let items = [];
+  let total = 0;
   
-  let message = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `   ${emoji} *${title}* (${items.length})\n`;
-  message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  
-  const showItems = items.slice(0, 15);
-  for (const item of showItems) {
-    const type = item.type || 'movie';
-    const emojiIcon = type === 'movie' ? '🎬' : type === 'tv' ? '📺' : type === 'kdrama' ? '🇰🇷' : '🇹🇷';
-    const genreEmoji = item.genre ? getCategoryEmoji(item.genre) : '';
-    
-    message += `${emojiIcon} *${item.title}* (${item.year}) ⭐${item.rating}\n`;
-    if (item.genre) message += `   ${genreEmoji} ${item.genre}\n`;
-    if (item.seasons) message += `   📅 ${item.seasons} Seasons\n`;
-    if (item.episodes) message += `   📅 ${item.episodes} Episodes\n`;
-    message += `   📥 [Download](${item.download})\n\n`;
+  switch(category) {
+    case 'movies':
+      items = MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' }));
+      break;
+    case 'tv':
+      items = MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' }));
+      break;
+    case 'kdrama':
+      items = MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' }));
+      break;
+    case 'turkish':
+      items = MEDIA_DB.turkishSeries ? MEDIA_DB.turkishSeries.map(m => ({ ...m, type: 'turkish' })) : [];
+      break;
+    case 'action':
+    case 'romance':
+    case 'comedy':
+    case 'drama':
+    case 'sci-fi':
+    case 'horror':
+      const allItems = [
+        ...MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' })),
+        ...MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' })),
+        ...MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' })),
+        ...(MEDIA_DB.turkishSeries || []).map(m => ({ ...m, type: 'turkish' }))
+      ];
+      items = allItems.filter(item => item.genre && item.genre.toLowerCase().includes(category));
+      break;
+    default:
+      items = [];
   }
   
-  if (items.length > 15) {
-    message += `_... and ${items.length - 15} more. Use Search to find specific titles._\n`;
-  }
+  total = items.length;
+  const start = page * perPage;
+  const end = start + perPage;
+  const paginated = items.slice(start, end);
   
-  return message;
-}
-
-function searchMedia(query) {
-  const results = [];
-  const q = query.toLowerCase();
-  
-  // Search Movies
-  for (const movie of MEDIA_DB.movies) {
-    if (movie.title.toLowerCase().includes(q) || (movie.genre && movie.genre.toLowerCase().includes(q))) {
-      results.push({ ...movie, type: 'movie' });
-    }
-  }
-  
-  // Search TV Series
-  for (const series of MEDIA_DB.tvSeries) {
-    if (series.title.toLowerCase().includes(q)) {
-      results.push({ ...series, type: 'tv' });
-    }
-  }
-  
-  // Search K-Dramas
-  for (const drama of MEDIA_DB.kdramas) {
-    if (drama.title.toLowerCase().includes(q)) {
-      results.push({ ...drama, type: 'kdrama' });
-    }
-  }
-  
-  // Search Turkish Series
-  if (MEDIA_DB.turkishSeries) {
-    for (const series of MEDIA_DB.turkishSeries) {
-      if (series.title.toLowerCase().includes(q)) {
-        results.push({ ...series, type: 'turkish' });
-      }
-    }
-  }
-  
-  return results;
+  return { items: paginated, total, hasMore: end < total };
 }
 
 function getRandomMedia() {
@@ -358,26 +342,6 @@ function getRandomMedia() {
     ...(MEDIA_DB.turkishSeries || []).map(m => ({ ...m, type: 'turkish' }))
   ];
   return all[Math.floor(Math.random() * all.length)];
-}
-
-function getMediaByGenre(genre) {
-  const results = [];
-  const g = genre.toLowerCase();
-  
-  const allItems = [
-    ...MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' })),
-    ...MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' })),
-    ...MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' })),
-    ...(MEDIA_DB.turkishSeries || []).map(m => ({ ...m, type: 'turkish' }))
-  ];
-  
-  for (const item of allItems) {
-    if (item.genre && item.genre.toLowerCase().includes(g)) {
-      results.push(item);
-    }
-  }
-  
-  return results;
 }
 
 function getDeveloperInfo() {
@@ -401,23 +365,103 @@ function isDeveloperQuestion(text) {
   return DEVELOPER_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-// ================= KEYBOARDS =================
-function getFilmKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: '🎬 Movies' }, { text: '📺 TV Series' }, { text: '🇰🇷 K-Drama' }],
-        [{ text: '🇹🇷 Turkish Series' }, { text: '🎲 Random Pick' }, { text: '🔍 Search Film' }],
-        [{ text: '⚔️ Action' }, { text: '❤️ Romance' }, { text: '😂 Comedy' }],
-        [{ text: '🎭 Drama' }, { text: '🚀 Sci-Fi' }, { text: '👻 Horror' }],
-        [{ text: '🔙 Exit Film Mode' }]
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: false
+// ================= DOWNLOAD FILE AND SEND TO BOT =================
+async function downloadAndSendMedia(chatId, item, type) {
+  try {
+    const emoji = type === 'movie' ? '🎬' : type === 'tv' ? '📺' : type === 'kdrama' ? '🇰🇷' : '🇹🇷';
+    const typeName = type === 'movie' ? 'Movie' : type === 'tv' ? 'TV Series' : type === 'kdrama' ? 'K-Drama' : 'Turkish Series';
+    
+    const statusMsg = await bot.sendMessage(
+      chatId,
+      `📥 *Downloading: ${item.title}*...\n\n⏳ Please wait, this may take a moment.`,
+      { parse_mode: "Markdown" }
+    );
+    
+    try {
+      const response = await axios({
+        method: 'GET',
+        url: item.download,
+        responseType: 'stream',
+        timeout: 60000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+      
+      const tempFile = path.join(__dirname, 'temp', `${Date.now()}_${item.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`);
+      
+      if (!fs.existsSync(path.join(__dirname, 'temp'))) {
+        fs.mkdirSync(path.join(__dirname, 'temp'));
+      }
+      
+      const writer = fs.createWriteStream(tempFile);
+      response.data.pipe(writer);
+      
+      await new Promise((resolve, reject) => {
+        writer.on('finish', resolve);
+        writer.on('error', reject);
+      });
+      
+      const caption = `${emoji} *${item.title}*\n` +
+        `📅 Year: ${item.year}\n` +
+        `📋 Type: ${typeName}\n` +
+        `⭐ Rating: ${item.rating}/10\n` +
+        (item.genre ? `🎭 Genre: ${item.genre}\n` : '') +
+        (item.seasons ? `📅 Seasons: ${item.seasons}\n` : '') +
+        (item.episodes ? `📅 Episodes: ${item.episodes}\n` : '') +
+        `\n✅ *Download Complete!*`;
+      
+      await bot.sendVideo(chatId, tempFile, { caption });
+      
+      fs.unlinkSync(tempFile);
+      
+      await bot.editMessageText(
+        `✅ *Download Complete!*\n\n${emoji} ${item.title} has been sent to you.`,
+        {
+          chat_id: chatId,
+          message_id: statusMsg.message_id,
+          parse_mode: "Markdown"
+        }
+      );
+      
+      const userId = String(chatId);
+      const user = await getUser(userId);
+      user.downloads = (user.downloads || 0) + 1;
+      await saveUser(user);
+      await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
+      
+      return true;
+      
+    } catch (downloadError) {
+      console.error("❌ Download error:", downloadError.message);
+      
+      await bot.editMessageText(
+        `⚠️ *Could not download the file directly.*\n\n` +
+        `📥 *${item.title}*\n` +
+        `📎 [Click here to download](${item.download})`,
+        {
+          chat_id: chatId,
+          message_id: statusMsg.message_id,
+          parse_mode: "Markdown",
+          disable_web_page_preview: true
+        }
+      );
+      
+      return false;
     }
-  };
+    
+  } catch (error) {
+    console.error("❌ Send media error:", error.message);
+    await bot.sendMessage(
+      chatId,
+      `⚠️ *Error downloading ${item.title}*\n\nPlease try again later.`,
+      { parse_mode: "Markdown" }
+    );
+    return false;
+  }
 }
 
+// ================= KEYBOARDS =================
 function getMainKeyboard() {
   return {
     reply_markup: {
@@ -425,6 +469,22 @@ function getMainKeyboard() {
         [{ text: '🎬 Film Download' }, { text: '💬 AI Chat' }],
         [{ text: '👑 Developer' }, { text: '📊 Status' }],
         [{ text: '💎 Pro' }, { text: '🔄 Reset' }, { text: '❓ Help' }]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: false
+    }
+  };
+}
+
+function getFilmCategoryKeyboard() {
+  return {
+    reply_markup: {
+      keyboard: [
+        [{ text: '🎬 Movies' }, { text: '📺 TV Series' }, { text: '🇰🇷 K-Drama' }],
+        [{ text: '🇹🇷 Turkish Series' }, { text: '🎲 Random Pick' }],
+        [{ text: '⚔️ Action' }, { text: '❤️ Romance' }, { text: '😂 Comedy' }],
+        [{ text: '🎭 Drama' }, { text: '🚀 Sci-Fi' }, { text: '👻 Horror' }],
+        [{ text: '🔙 Exit Film Mode' }]
       ],
       resize_keyboard: true,
       one_time_keyboard: false
@@ -441,6 +501,7 @@ bot.onText(/\/start|\/menu/, async (msg) => {
   const user = await getUser(userId);
   
   user.filmMode = false;
+  user.currentPage = 0;
   await saveUser(user);
   
   const isPremium = user.premium || user.isAdmin;
@@ -455,7 +516,7 @@ bot.onText(/\/start|\/menu/, async (msg) => {
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `📌 **Choose a mode:**\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `🎬 **Film Download** - Browse & download movies\n` +
+    `🎬 **Film Download** - Download movies directly\n` +
     `💬 **AI Chat** - Chat with AI assistant\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
     `*Click a button below to get started!*`,
@@ -470,6 +531,7 @@ bot.onText(/🎬 Film Download/, async (msg) => {
   const user = await getUser(userId);
   
   user.filmMode = true;
+  user.currentPage = 0;
   await saveUser(user);
   
   const totalMovies = MEDIA_DB.movies.length;
@@ -491,9 +553,8 @@ bot.onText(/🎬 Film Download/, async (msg) => {
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `📊 Total: ${total} titles\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `🔍 *Browse by category or search for a specific title*\n` +
-    `📌 *Use the buttons below to explore:*`,
-    { parse_mode: "Markdown", ...getFilmKeyboard() }
+    `🔍 *Select a category below to browse:*`,
+    { parse_mode: "Markdown", ...getFilmCategoryKeyboard() }
   );
 });
 
@@ -504,6 +565,7 @@ bot.onText(/🔙 Exit Film Mode/, async (msg) => {
   const user = await getUser(userId);
   
   user.filmMode = false;
+  user.currentPage = 0;
   await saveUser(user);
   
   await bot.sendMessage(
@@ -515,149 +577,125 @@ bot.onText(/🔙 Exit Film Mode/, async (msg) => {
   );
 });
 
-// Movies Button (Film Mode)
+// ================= CATEGORY HANDLERS =================
+async function showCategory(chatId, userId, category, title, emoji) {
+  const user = await getUser(userId);
+  
+  if (!user.filmMode) {
+    await bot.sendMessage(
+      chatId,
+      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+  
+  user.currentCategory = category;
+  user.currentPage = 0;
+  await saveUser(user);
+  
+  const { items, total, hasMore } = getItemsByCategory(category, 0);
+  
+  if (items.length === 0) {
+    await bot.sendMessage(
+      chatId,
+      `❌ No ${title} found.`,
+      { parse_mode: "Markdown", ...getFilmCategoryKeyboard() }
+    );
+    return;
+  }
+  
+  await bot.sendMessage(
+    chatId,
+    `${emoji} *${title}* (${total} titles)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    { parse_mode: "Markdown" }
+  );
+  
+  for (const item of items) {
+    const type = item.type || 'movie';
+    const emojiIcon = type === 'movie' ? '🎬' : type === 'tv' ? '📺' : type === 'kdrama' ? '🇰🇷' : '🇹🇷';
+    const genreEmoji = item.genre ? getCategoryEmoji(item.genre) : '';
+    
+    const message = `${emojiIcon} *${item.title}* (${item.year}) ⭐${item.rating}\n` +
+      (item.genre ? `   ${genreEmoji} ${item.genre}\n` : '') +
+      (item.seasons ? `   📅 ${item.seasons} Seasons\n` : '') +
+      (item.episodes ? `   📅 ${item.episodes} Episodes\n` : '');
+    
+    await bot.sendMessage(
+      chatId,
+      message,
+      { 
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `📥 Download ${item.title}`, callback_data: `download_${type}_${item.title}` }]
+          ]
+        }
+      }
+    );
+  }
+  
+  // Navigation buttons
+  const navButtons = [];
+  if (hasMore) {
+    navButtons.push({ text: `⏩ Next Page (${total} total)`, callback_data: `page_${category}_1` });
+  }
+  navButtons.push({ text: `🔙 Back to Categories`, callback_data: `back_categories` });
+  
+  await bot.sendMessage(
+    chatId,
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📌 *Navigation:*`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [navButtons]
+      }
+    }
+  );
+}
+
 bot.onText(/🎬 Movies/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = await getUser(userId);
-  
-  if (!user.filmMode) {
-    await bot.sendMessage(
-      chatId,
-      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
-  
-  const items = MEDIA_DB.movies.map(m => ({ ...m, type: 'movie' }));
-  const message = formatMediaList(items, 'Movies Library', '🎬');
-  
-  user.downloads = (user.downloads || 0) + 1;
-  await saveUser(user);
-  
-  await bot.sendMessage(
-    chatId,
-    message,
-    { parse_mode: "Markdown", disable_web_page_preview: true, ...getFilmKeyboard() }
-  );
+  await showCategory(msg.chat.id, String(msg.from.id), 'movies', 'Movies Library', '🎬');
 });
 
-// TV Series Button (Film Mode)
 bot.onText(/📺 TV Series/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = await getUser(userId);
-  
-  if (!user.filmMode) {
-    await bot.sendMessage(
-      chatId,
-      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
-  
-  const items = MEDIA_DB.tvSeries.map(m => ({ ...m, type: 'tv' }));
-  const message = formatMediaList(items, 'TV Series Library', '📺');
-  
-  user.downloads = (user.downloads || 0) + 1;
-  await saveUser(user);
-  
-  await bot.sendMessage(
-    chatId,
-    message,
-    { parse_mode: "Markdown", disable_web_page_preview: true, ...getFilmKeyboard() }
-  );
+  await showCategory(msg.chat.id, String(msg.from.id), 'tv', 'TV Series Library', '📺');
 });
 
-// K-Drama Button (Film Mode)
 bot.onText(/🇰🇷 K-Drama/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = await getUser(userId);
-  
-  if (!user.filmMode) {
-    await bot.sendMessage(
-      chatId,
-      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
-  
-  const items = MEDIA_DB.kdramas.map(m => ({ ...m, type: 'kdrama' }));
-  const message = formatMediaList(items, 'K-Drama Library', '🇰🇷');
-  
-  user.downloads = (user.downloads || 0) + 1;
-  await saveUser(user);
-  
-  await bot.sendMessage(
-    chatId,
-    message,
-    { parse_mode: "Markdown", disable_web_page_preview: true, ...getFilmKeyboard() }
-  );
+  await showCategory(msg.chat.id, String(msg.from.id), 'kdrama', 'K-Drama Library', '🇰🇷');
 });
 
-// Turkish Series Button (Film Mode)
 bot.onText(/🇹🇷 Turkish Series/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = await getUser(userId);
-  
-  if (!user.filmMode) {
-    await bot.sendMessage(
-      chatId,
-      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
-  
-  const items = MEDIA_DB.turkishSeries.map(m => ({ ...m, type: 'turkish' }));
-  const message = formatMediaList(items, 'Turkish Series Library', '🇹🇷');
-  
-  user.downloads = (user.downloads || 0) + 1;
-  await saveUser(user);
-  
-  await bot.sendMessage(
-    chatId,
-    message,
-    { parse_mode: "Markdown", disable_web_page_preview: true, ...getFilmKeyboard() }
-  );
+  await showCategory(msg.chat.id, String(msg.from.id), 'turkish', 'Turkish Series Library', '🇹🇷');
 });
 
-// Search Film Button (Film Mode)
-bot.onText(/🔍 Search Film/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const user = await getUser(userId);
-  
-  if (!user.filmMode) {
-    await bot.sendMessage(
-      chatId,
-      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
-  
-  await bot.sendMessage(
-    chatId,
-    `🔍 **Search Film**\n\n` +
-    `Send me the name of a movie, series, or drama you're looking for.\n\n` +
-    `💡 Examples:\n` +
-    `• "Godfather"\n` +
-    `• "Game of Thrones"\n` +
-    `• "Squid Game"\n` +
-    `• "Diriliş"\n` +
-    `• "Action"\n\n` +
-    `*Type your search query now!*`,
-    { parse_mode: "Markdown", ...getFilmKeyboard() }
-  );
+// Genre Handlers
+bot.onText(/⚔️ Action/, async (msg) => {
+  await showCategory(msg.chat.id, String(msg.from.id), 'action', 'Action Movies & Series', '⚔️');
 });
 
-// Random Pick Button (Film Mode)
+bot.onText(/❤️ Romance/, async (msg) => {
+  await showCategory(msg.chat.id, String(msg.from.id), 'romance', 'Romance Movies & Series', '❤️');
+});
+
+bot.onText(/😂 Comedy/, async (msg) => {
+  await showCategory(msg.chat.id, String(msg.from.id), 'comedy', 'Comedy Movies & Series', '😂');
+});
+
+bot.onText(/🎭 Drama/, async (msg) => {
+  await showCategory(msg.chat.id, String(msg.from.id), 'drama', 'Drama Movies & Series', '🎭');
+});
+
+bot.onText(/🚀 Sci-Fi/, async (msg) => {
+  await showCategory(msg.chat.id, String(msg.from.id), 'sci-fi', 'Sci-Fi Movies & Series', '🚀');
+});
+
+bot.onText(/👻 Horror/, async (msg) => {
+  await showCategory(msg.chat.id, String(msg.from.id), 'horror', 'Horror Movies & Series', '👻');
+});
+
+// Random Pick
 bot.onText(/🎲 Random Pick/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -697,63 +735,226 @@ bot.onText(/🎲 Random Pick/, async (msg) => {
   }
   
   message += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
-  message += `┃ 📥 [⬇️ Download Now](${random.download})\n`;
+  message += `┃ 📥 Click the button below to download\n`;
   message += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
-  
-  user.downloads = (user.downloads || 0) + 1;
-  await saveUser(user);
   
   await bot.sendMessage(
     chatId,
     message,
-    { parse_mode: "Markdown", disable_web_page_preview: true, ...getFilmKeyboard() }
+    { 
+      parse_mode: "Markdown", 
+      disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `📥 Download ${random.title}`, callback_data: `download_${random.type}_${random.title}` }],
+          [{ text: `🎲 Another Random`, callback_data: `random_pick` }]
+        ]
+      }
+    }
   );
 });
 
-// Genre Buttons (Film Mode)
-async function handleGenre(chatId, userId, genre, emoji, title) {
-  const user = await getUser(userId);
+// ================= INLINE BUTTON HANDLERS =================
+bot.on('callback_query', async (callbackQuery) => {
+  const action = callbackQuery.data;
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const userId = String(callbackQuery.from.id);
   
-  if (!user.filmMode) {
+  // Handle "Back to Categories"
+  if (action === 'back_categories') {
+    await bot.deleteMessage(chatId, messageId);
     await bot.sendMessage(
       chatId,
-      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
-      { parse_mode: "Markdown" }
+      `🎬 **ALPHA CINEMA** 🎬\n\n` +
+      `Select a category below:`,
+      { parse_mode: "Markdown", ...getFilmCategoryKeyboard() }
     );
+    await bot.answerCallbackQuery(callbackQuery.id);
     return;
   }
   
-  const results = getMediaByGenre(genre);
-  if (results.length === 0) {
-    await bot.sendMessage(chatId, `❌ No ${title} titles found.`, { ...getFilmKeyboard() });
+  // Handle "Random Pick"
+  if (action === 'random_pick') {
+    await bot.deleteMessage(chatId, messageId);
+    const random = getRandomMedia();
+    
+    const emojis = { movie: '🎬', tv: '📺', kdrama: '🇰🇷', turkish: '🇹🇷' };
+    const types = { movie: 'Movie', tv: 'TV Series', kdrama: 'K-Drama', turkish: 'Turkish Series' };
+    
+    let message = `🎲 **Random Pick**\n\n`;
+    message += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
+    message += `┃ ${emojis[random.type]} *${random.title}*\n`;
+    message += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
+    message += `┃ 📅 Year: ${random.year}\n`;
+    message += `┃ 📋 Type: ${types[random.type]}\n`;
+    message += `┃ ⭐ Rating: ${random.rating}/10\n`;
+    
+    if (random.genre) {
+      const genreEmoji = getCategoryEmoji(random.genre);
+      message += `┃ 🎭 Genre: ${genreEmoji} ${random.genre}\n`;
+    }
+    if (random.seasons) {
+      message += `┃ 📅 Seasons: ${random.seasons}\n`;
+    }
+    if (random.episodes) {
+      message += `┃ 📅 Episodes: ${random.episodes}\n`;
+    }
+    
+    message += `┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n`;
+    message += `┃ 📥 Click the button below to download\n`;
+    message += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
+    
+    await bot.sendMessage(
+      chatId,
+      message,
+      { 
+        parse_mode: "Markdown", 
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `📥 Download ${random.title}`, callback_data: `download_${random.type}_${random.title}` }],
+            [{ text: `🎲 Another Random`, callback_data: `random_pick` }]
+          ]
+        }
+      }
+    );
+    await bot.answerCallbackQuery(callbackQuery.id);
     return;
   }
-  const message = formatMediaList(results, `${title} Movies & Series`, emoji);
-  await bot.sendMessage(chatId, message, { parse_mode: "Markdown", disable_web_page_preview: true, ...getFilmKeyboard() });
-}
-
-bot.onText(/⚔️ Action/, async (msg) => {
-  await handleGenre(msg.chat.id, String(msg.from.id), 'action', '⚔️', 'Action');
-});
-
-bot.onText(/❤️ Romance/, async (msg) => {
-  await handleGenre(msg.chat.id, String(msg.from.id), 'romance', '❤️', 'Romance');
-});
-
-bot.onText(/😂 Comedy/, async (msg) => {
-  await handleGenre(msg.chat.id, String(msg.from.id), 'comedy', '😂', 'Comedy');
-});
-
-bot.onText(/🎭 Drama/, async (msg) => {
-  await handleGenre(msg.chat.id, String(msg.from.id), 'drama', '🎭', 'Drama');
-});
-
-bot.onText(/🚀 Sci-Fi/, async (msg) => {
-  await handleGenre(msg.chat.id, String(msg.from.id), 'sci-fi', '🚀', 'Sci-Fi');
-});
-
-bot.onText(/👻 Horror/, async (msg) => {
-  await handleGenre(msg.chat.id, String(msg.from.id), 'horror', '👻', 'Horror');
+  
+  // Handle Page Navigation
+  if (action.startsWith('page_')) {
+    const parts = action.split('_');
+    const category = parts[1];
+    const page = parseInt(parts[2]);
+    
+    await bot.deleteMessage(chatId, messageId);
+    
+    const user = await getUser(userId);
+    const { items, total, hasMore } = getItemsByCategory(category, page);
+    
+    const categoryNames = {
+      movies: 'Movies Library', tv: 'TV Series Library', kdrama: 'K-Drama Library',
+      turkish: 'Turkish Series Library', action: 'Action Movies & Series',
+      romance: 'Romance Movies & Series', comedy: 'Comedy Movies & Series',
+      drama: 'Drama Movies & Series', 'sci-fi': 'Sci-Fi Movies & Series',
+      horror: 'Horror Movies & Series'
+    };
+    const categoryEmojis = {
+      movies: '🎬', tv: '📺', kdrama: '🇰🇷', turkish: '🇹🇷',
+      action: '⚔️', romance: '❤️', comedy: '😂', drama: '🎭',
+      'sci-fi': '🚀', horror: '👻'
+    };
+    
+    const title = categoryNames[category] || 'Results';
+    const emoji = categoryEmojis[category] || '📚';
+    
+    await bot.sendMessage(
+      chatId,
+      `${emoji} *${title}* (${total} titles) - Page ${page + 1}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      { parse_mode: "Markdown" }
+    );
+    
+    for (const item of items) {
+      const type = item.type || 'movie';
+      const emojiIcon = type === 'movie' ? '🎬' : type === 'tv' ? '📺' : type === 'kdrama' ? '🇰🇷' : '🇹🇷';
+      const genreEmoji = item.genre ? getCategoryEmoji(item.genre) : '';
+      
+      const message = `${emojiIcon} *${item.title}* (${item.year}) ⭐${item.rating}\n` +
+        (item.genre ? `   ${genreEmoji} ${item.genre}\n` : '') +
+        (item.seasons ? `   📅 ${item.seasons} Seasons\n` : '') +
+        (item.episodes ? `   📅 ${item.episodes} Episodes\n` : '');
+      
+      await bot.sendMessage(
+        chatId,
+        message,
+        { 
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: `📥 Download ${item.title}`, callback_data: `download_${type}_${item.title}` }]
+            ]
+          }
+        }
+      );
+    }
+    
+    const navButtons = [];
+    if (page > 0) {
+      navButtons.push({ text: `⏪ Previous`, callback_data: `page_${category}_${page - 1}` });
+    }
+    if (hasMore) {
+      navButtons.push({ text: `⏩ Next`, callback_data: `page_${category}_${page + 1}` });
+    }
+    navButtons.push({ text: `🔙 Back to Categories`, callback_data: `back_categories` });
+    
+    await bot.sendMessage(
+      chatId,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📌 *Navigation:*`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [navButtons]
+        }
+      }
+    );
+    
+    await bot.answerCallbackQuery(callbackQuery.id);
+    return;
+  }
+  
+  // Handle Download
+  if (action.startsWith('download_')) {
+    try {
+      const parts = action.split('_');
+      const type = parts[1];
+      const title = parts.slice(2).join('_');
+      
+      let item = null;
+      
+      if (type === 'movie') {
+        item = MEDIA_DB.movies.find(m => m.title === title);
+      } else if (type === 'tv') {
+        item = MEDIA_DB.tvSeries.find(m => m.title === title);
+      } else if (type === 'kdrama') {
+        item = MEDIA_DB.kdramas.find(m => m.title === title);
+      } else if (type === 'turkish') {
+        item = MEDIA_DB.turkishSeries.find(m => m.title === title);
+      }
+      
+      if (!item) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '❌ Item not found!',
+          show_alert: true
+        });
+        return;
+      }
+      
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: `📥 Starting download: ${item.title}`,
+        show_alert: false
+      });
+      
+      await bot.editMessageText(
+        `📥 *Downloading: ${item.title}*...\n\n⏳ Please wait, this may take a moment.`,
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: "Markdown"
+        }
+      );
+      
+      await downloadAndSendMedia(chatId, item, type);
+      
+    } catch (error) {
+      console.error("❌ Download callback error:", error.message);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Error downloading. Please try again.',
+        show_alert: true
+      });
+    }
+  }
 });
 
 // AI Chat Button
@@ -879,9 +1080,10 @@ bot.onText(/❓ Help/, async (msg) => {
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `🎬 **Film Download Mode**\n` +
     `• Click "🎬 Film Download" to enter\n` +
-    `• Browse by category or search\n` +
-    `• Click "🎲 Random Pick" for suggestions\n` +
-    `• All downloads have real links\n` +
+    `• Select a category from the buttons\n` +
+    `• Browse titles with Next/Previous buttons\n` +
+    `• Click "Download" to get files\n` +
+    `• Files download directly in Telegram\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `💬 **AI Chat Mode**\n` +
     `• Click "💬 AI Chat" to enter\n` +
@@ -892,7 +1094,7 @@ bot.onText(/❓ Help/, async (msg) => {
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `**Free Limits:**\n` +
     `• 5 AI chat messages\n` +
-    `• Unlimited film browsing\n` +
+    `• Unlimited film downloads\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `**Alpha Pro:**\n` +
     `• Unlimited everything! 🚀`,
@@ -909,7 +1111,7 @@ bot.on("message", async (msg) => {
   // Ignore all button texts
   const buttonTexts = [
     '🔙 Exit Film Mode', '🎬 Film Download', '🎬 Movies', '📺 TV Series', 
-    '🇰🇷 K-Drama', '🇹🇷 Turkish Series', '🔍 Search Film', '🎲 Random Pick',
+    '🇰🇷 K-Drama', '🇹🇷 Turkish Series', '🎲 Random Pick',
     '⚔️ Action', '❤️ Romance', '😂 Comedy', '🎭 Drama', '🚀 Sci-Fi', '👻 Horror',
     '💬 AI Chat', '👑 Developer', '📊 Status', '💎 Pro', '🔄 Reset', '❓ Help',
     '/start', '/menu'
@@ -922,40 +1124,19 @@ bot.on("message", async (msg) => {
   try {
     const user = await getUser(userId);
     
-    // ===== FILM MODE: Only handle film-related queries =====
+    // If in film mode, ignore text messages (all interactions are button-based)
     if (user.filmMode) {
-      // Search for films based on the message
-      const results = searchMedia(text);
-      
-      if (results.length > 0) {
-        const message = formatMediaList(results, `Results for "${text}"`, '🔍');
-        
-        user.downloads = (user.downloads || 0) + 1;
-        await saveUser(user);
-        await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
-        
-        await bot.sendMessage(
-          chatId,
-          message,
-          { parse_mode: "Markdown", disable_web_page_preview: true, ...getFilmKeyboard() }
-        );
-      } else {
-        await bot.sendMessage(
-          chatId,
-          `❌ No results found for "${text}".\n\n` +
-          `Try a different search term or browse by category.\n\n` +
-          `💡 Tips:\n` +
-          `• Use the category buttons above\n` +
-          `• Try "🔍 Search Film" for specific titles\n` +
-          `• Use "🎲 Random Pick" for suggestions`,
-          { parse_mode: "Markdown", ...getFilmKeyboard() }
-        );
-      }
-      return; // ⭐ IMPORTANT: Stop here, don't process AI chat
+      await bot.sendMessage(
+        chatId,
+        `🎬 **Film Download Mode**\n\n` +
+        `Please use the buttons below to browse and download films.\n\n` +
+        `📌 *Select a category to get started!*`,
+        { parse_mode: "Markdown", ...getFilmCategoryKeyboard() }
+      );
+      return;
     }
     
     // ===== AI CHAT MODE =====
-    // Check for developer question
     if (isDeveloperQuestion(text)) {
       await bot.sendMessage(
         chatId,
@@ -965,7 +1146,6 @@ bot.on("message", async (msg) => {
       return;
     }
     
-    // Regular AI chat
     if (!aiReady) {
       await initializeAI();
       if (!aiReady) {
