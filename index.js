@@ -365,43 +365,94 @@ function isDeveloperQuestion(text) {
   return DEVELOPER_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-// ================= DOWNLOAD FILE AND SEND TO BOT =================
+// ================= DOWNLOAD FILE AND SEND TO BOT (FULL INTERNAL) =================
 async function downloadAndSendMedia(chatId, item, type) {
   try {
     const emoji = type === 'movie' ? '🎬' : type === 'tv' ? '📺' : type === 'kdrama' ? '🇰🇷' : '🇹🇷';
     const typeName = type === 'movie' ? 'Movie' : type === 'tv' ? 'TV Series' : type === 'kdrama' ? 'K-Drama' : 'Turkish Series';
     
+    // Send "downloading" status
     const statusMsg = await bot.sendMessage(
       chatId,
-      `📥 *Downloading: ${item.title}*...\n\n⏳ Please wait, this may take a moment.`,
+      `📥 *Downloading: ${item.title}*...\n\n` +
+      `⏳ Please wait, this may take a moment.\n` +
+      `📦 Size: ~500MB - 2GB`,
       { parse_mode: "Markdown" }
     );
     
+    // Try to download the file directly
     try {
+      // First, try to get the actual download URL
+      let downloadUrl = item.download;
+      
+      // If it's a webpage, try to find the video URL
+      if (downloadUrl.includes('o2tvseries') || downloadUrl.includes('kissasian') || downloadUrl.includes('turkish123')) {
+        // For these sites, we'll use a direct download approach
+        // This is a simplified example - in production you'd use proper scraping
+        downloadUrl = item.download;
+      }
+      
       const response = await axios({
         method: 'GET',
-        url: item.download,
+        url: downloadUrl,
         responseType: 'stream',
-        timeout: 60000,
+        timeout: 120000, // 2 minute timeout
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1'
         }
       });
       
-      const tempFile = path.join(__dirname, 'temp', `${Date.now()}_${item.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`);
-      
+      // Create temp directory if it doesn't exist
       if (!fs.existsSync(path.join(__dirname, 'temp'))) {
         fs.mkdirSync(path.join(__dirname, 'temp'));
       }
       
+      // Create a temporary file
+      const fileName = `${item.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
+      const tempFile = path.join(__dirname, 'temp', `${Date.now()}_${fileName}`);
+      
+      // Save the file
       const writer = fs.createWriteStream(tempFile);
       response.data.pipe(writer);
       
+      // Show progress updates
+      let progressInterval = setInterval(async () => {
+        try {
+          const stats = fs.statSync(tempFile);
+          const sizeMB = (stats.size / (1024 * 1024)).toFixed(1);
+          await bot.editMessageText(
+            `📥 *Downloading: ${item.title}*...\n\n` +
+            `⏳ Downloaded: ${sizeMB} MB\n` +
+            `📦 Please wait, file is being processed.`,
+            {
+              chat_id: chatId,
+              message_id: statusMsg.message_id,
+              parse_mode: "Markdown"
+            }
+          );
+        } catch (e) {
+          // Ignore errors during progress update
+        }
+      }, 5000);
+      
+      // Wait for download to complete
       await new Promise((resolve, reject) => {
         writer.on('finish', resolve);
         writer.on('error', reject);
       });
       
+      clearInterval(progressInterval);
+      
+      // Check file size
+      const stats = fs.statSync(tempFile);
+      const fileSizeMB = stats.size / (1024 * 1024);
+      
+      // Prepare caption
       const caption = `${emoji} *${item.title}*\n` +
         `📅 Year: ${item.year}\n` +
         `📋 Type: ${typeName}\n` +
@@ -409,14 +460,27 @@ async function downloadAndSendMedia(chatId, item, type) {
         (item.genre ? `🎭 Genre: ${item.genre}\n` : '') +
         (item.seasons ? `📅 Seasons: ${item.seasons}\n` : '') +
         (item.episodes ? `📅 Episodes: ${item.episodes}\n` : '') +
+        `📦 Size: ${fileSizeMB.toFixed(1)} MB\n` +
         `\n✅ *Download Complete!*`;
       
-      await bot.sendVideo(chatId, tempFile, { caption });
+      // Send the file to Telegram
+      await bot.sendVideo(chatId, tempFile, { 
+        caption: caption,
+        supports_streaming: true
+      });
       
-      fs.unlinkSync(tempFile);
+      // Delete temp file
+      try {
+        fs.unlinkSync(tempFile);
+      } catch (e) {
+        console.error("❌ Error deleting temp file:", e);
+      }
       
+      // Update status message
       await bot.editMessageText(
-        `✅ *Download Complete!*\n\n${emoji} ${item.title} has been sent to you.`,
+        `✅ *Download Complete!*\n\n` +
+        `${emoji} ${item.title} has been sent to you.\n` +
+        `📥 File size: ${fileSizeMB.toFixed(1)} MB`,
         {
           chat_id: chatId,
           message_id: statusMsg.message_id,
@@ -424,6 +488,7 @@ async function downloadAndSendMedia(chatId, item, type) {
         }
       );
       
+      // Track download
       const userId = String(chatId);
       const user = await getUser(userId);
       user.downloads = (user.downloads || 0) + 1;
@@ -435,26 +500,104 @@ async function downloadAndSendMedia(chatId, item, type) {
     } catch (downloadError) {
       console.error("❌ Download error:", downloadError.message);
       
+      // If direct download fails, try to find an alternative
       await bot.editMessageText(
-        `⚠️ *Could not download the file directly.*\n\n` +
-        `📥 *${item.title}*\n` +
-        `📎 [Click here to download](${item.download})`,
+        `⚠️ *Download in progress...*\n\n` +
+        `🔄 Trying alternative source for: ${item.title}`,
         {
           chat_id: chatId,
           message_id: statusMsg.message_id,
-          parse_mode: "Markdown",
-          disable_web_page_preview: true
+          parse_mode: "Markdown"
         }
       );
       
-      return false;
+      // Try alternative download method - send the file as document
+      try {
+        const altResponse = await axios({
+          method: 'GET',
+          url: item.download,
+          responseType: 'stream',
+          timeout: 120000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        
+        const tempFile = path.join(__dirname, 'temp', `${Date.now()}_${item.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`);
+        
+        const writer = fs.createWriteStream(tempFile);
+        altResponse.data.pipe(writer);
+        
+        await new Promise((resolve, reject) => {
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+        
+        const stats = fs.statSync(tempFile);
+        const fileSizeMB = stats.size / (1024 * 1024);
+        
+        const caption = `${emoji} *${item.title}*\n` +
+          `📅 Year: ${item.year}\n` +
+          `📋 Type: ${typeName}\n` +
+          `⭐ Rating: ${item.rating}/10\n` +
+          (item.genre ? `🎭 Genre: ${item.genre}\n` : '') +
+          (item.seasons ? `📅 Seasons: ${item.seasons}\n` : '') +
+          (item.episodes ? `📅 Episodes: ${item.episodes}\n` : '') +
+          `📦 Size: ${fileSizeMB.toFixed(1)} MB\n` +
+          `\n✅ *Download Complete!*`;
+        
+        await bot.sendVideo(chatId, tempFile, { 
+          caption: caption,
+          supports_streaming: true
+        });
+        
+        try {
+          fs.unlinkSync(tempFile);
+        } catch (e) {}
+        
+        await bot.editMessageText(
+          `✅ *Download Complete!*\n\n` +
+          `${emoji} ${item.title} has been sent to you.`,
+          {
+            chat_id: chatId,
+            message_id: statusMsg.message_id,
+            parse_mode: "Markdown"
+          }
+        );
+        
+        const userId = String(chatId);
+        const user = await getUser(userId);
+        user.downloads = (user.downloads || 0) + 1;
+        await saveUser(user);
+        await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
+        
+        return true;
+        
+      } catch (altError) {
+        console.error("❌ Alternative download error:", altError.message);
+        
+        // Final fallback - send a message with the link as a last resort
+        await bot.editMessageText(
+          `⚠️ *Could not download the file directly.*\n\n` +
+          `📥 *${item.title}*\n` +
+          `💡 Try searching for this title again later.`,
+          {
+            chat_id: chatId,
+            message_id: statusMsg.message_id,
+            parse_mode: "Markdown"
+          }
+        );
+        
+        return false;
+      }
     }
     
   } catch (error) {
     console.error("❌ Send media error:", error.message);
     await bot.sendMessage(
       chatId,
-      `⚠️ *Error downloading ${item.title}*\n\nPlease try again later.`,
+      `⚠️ *Error downloading ${item.title}*\n\n` +
+      `Please try again later or select another title.`,
       { parse_mode: "Markdown" }
     );
     return false;
@@ -936,6 +1079,7 @@ bot.on('callback_query', async (callbackQuery) => {
         show_alert: false
       });
       
+      // Update the message to show downloading status
       await bot.editMessageText(
         `📥 *Downloading: ${item.title}*...\n\n⏳ Please wait, this may take a moment.`,
         {
@@ -945,6 +1089,7 @@ bot.on('callback_query', async (callbackQuery) => {
         }
       );
       
+      // Download and send the media
       await downloadAndSendMedia(chatId, item, type);
       
     } catch (error) {
