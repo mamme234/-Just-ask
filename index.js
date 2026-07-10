@@ -6,10 +6,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from "axios";
 import path from "path";
 import { fileURLToPath } from 'url';
-import { createCanvas } from 'canvas';
 import mongoose from "mongoose";
 import fs from "fs";
-import { MEDIA_DB, getMediaByCategory, getMediaCount } from './media/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +47,44 @@ const OWNER_KEYWORDS = [
   'boss', 'admin', 'owner'
 ];
 
+// ================= ADULT CONTENT DATABASE =================
+const ADULT_CONTENT = [
+  // ===== ADD YOUR ADULT CONTENT HERE =====
+  // Just replace these with your own content
+  // Format: { title, year, genre, rating, source, adult: true, magnet, download }
+  
+  { 
+    title: "Content Title 1", 
+    year: "2024", 
+    genre: "Adult", 
+    rating: "5.0", 
+    source: "1337x",
+    adult: true,
+    magnet: "magnet:?xt=urn:btih:1234567890abcdef&dn=Content+Title+1&tr=udp://tracker.opentrackr.org:1337/announce", 
+    download: "https://1337x.to/search/Content+Title+1/1/" 
+  },
+  { 
+    title: "Content Title 2", 
+    year: "2024", 
+    genre: "Adult", 
+    rating: "4.5", 
+    source: "1337x",
+    adult: true,
+    magnet: "magnet:?xt=urn:btih:2234567890abcdef&dn=Content+Title+2&tr=udp://tracker.opentrackr.org:1337/announce", 
+    download: "https://1337x.to/search/Content+Title+2/1/" 
+  },
+  { 
+    title: "Content Title 3", 
+    year: "2023", 
+    genre: "Adult", 
+    rating: "4.0", 
+    source: "1337x",
+    adult: true,
+    magnet: "magnet:?xt=urn:btih:3234567890abcdef&dn=Content+Title+3&tr=udp://tracker.opentrackr.org:1337/announce", 
+    download: "https://1337x.to/search/Content+Title+3/1/" 
+  },
+];
+
 // ================= VALIDATE ENV =================
 console.log("🔍 Checking environment variables...");
 console.log("BOT_TOKEN:", process.env.BOT_TOKEN ? "✅ Set" : "❌ Missing");
@@ -79,9 +115,8 @@ const UserSchema = new mongoose.Schema({
   memory: { type: Object, default: {} },
   lastActive: { type: Date, default: Date.now },
   downloads: { type: Number, default: 0 },
-  filmMode: { type: Boolean, default: false },
-  currentPage: { type: Number, default: 0 },
-  currentCategory: { type: String, default: 'americanMovies' }
+  adultMode: { type: Boolean, default: false },
+  ageVerified: { type: Boolean, default: false },
 });
 
 const StatsSchema = new mongoose.Schema({
@@ -190,9 +225,8 @@ function getUserFallback(id) {
       joinedDate: new Date().toISOString(),
       memory: {},
       downloads: 0,
-      filmMode: false,
-      currentPage: 0,
-      currentCategory: 'americanMovies'
+      adultMode: false,
+      ageVerified: false,
     };
   }
   return fallbackDB.users[userId];
@@ -202,8 +236,7 @@ function getUserFallback(id) {
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ================= AI ENGINE (Hidden - No Google Names) =================
-// Using AI engine but never mentioning its name
+// ================= AI ENGINE =================
 const aiEngine = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const AI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash"];
 let activeModel = null;
@@ -284,39 +317,6 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   }
 });
 
-// ================= MEDIA FUNCTIONS =================
-function getCategoryEmoji(category) {
-  const emojis = {
-    'Action': '⚔️', 'Adventure': '🗺️', 'Animation': '🎨',
-    'Comedy': '😂', 'Crime': '🔫', 'Drama': '🎭',
-    'Fantasy': '🐉', 'Horror': '👻', 'Romance': '❤️',
-    'Sci-Fi': '🚀', 'Thriller': '🔪', 'Western': '🤠',
-    'Historical': '🏰', 'Family': '👨‍👩‍👧‍👦'
-  };
-  return emojis[category] || '🎬';
-}
-
-function getItemsByCategory(category, page = 0, perPage = 5) {
-  const items = getMediaByCategory(category) || [];
-  const total = items.length;
-  const start = page * perPage;
-  const end = start + perPage;
-  const paginated = items.slice(start, end);
-  return { items: paginated, total, hasMore: end < total };
-}
-
-function getRandomMedia() {
-  const all = [];
-  const categories = Object.keys(MEDIA_DB);
-  for (const cat of categories) {
-    const items = MEDIA_DB[cat] || [];
-    for (const item of items) {
-      all.push({ ...item, category: cat });
-    }
-  }
-  return all[Math.floor(Math.random() * all.length)];
-}
-
 // ================= OWNER INFO =================
 function getOwnerInfo() {
   return `👑 **Alpha AI Pro - Developer**\n\n` +
@@ -339,48 +339,38 @@ function isOwnerQuestion(text) {
   return OWNER_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-// ================= SEND MEDIA =================
-async function sendMedia(chatId, item, category) {
+// ================= AGE VERIFICATION =================
+async function isUserVerified(chatId) {
   try {
-    const emojiMap = {
-      'turkish': '🇹🇷', 'kdrama': '🇰🇷', 'anime': '🎌',
-      'americanMovies': '🎬', 'americanTV': '📺', 'indian': '🇮🇳',
-      'arabic': '🇦🇪', 'korean': '🇰🇷', 'japanese': '🇯🇵',
-      'european': '🇪🇺'
-    };
-    const emoji = emojiMap[category] || '🎬';
-    
-    const typeNames = {
-      'turkish': 'Turkish Series', 'kdrama': 'K-Drama',
-      'anime': 'Anime', 'americanMovies': 'Movie',
-      'americanTV': 'TV Series', 'indian': 'Indian Movie',
-      'arabic': 'Arabic Series', 'korean': 'Korean Movie',
-      'japanese': 'Japanese Movie', 'european': 'European Movie'
-    };
-    const typeName = typeNames[category] || 'Media';
-    
-    const caption = `${emoji} *${item.title}*\n` +
+    const userId = String(chatId);
+    const user = await getUser(userId);
+    return user.ageVerified || false;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function verifyAge(chatId) {
+  try {
+    const userId = String(chatId);
+    const user = await getUser(userId);
+    user.ageVerified = true;
+    await saveUser(user);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// ================= SEND MEDIA =================
+async function sendMedia(chatId, item) {
+  try {
+    let caption = `🔞 *${item.title}*\n` +
       `📅 Year: ${item.year}\n` +
-      `📋 Type: ${typeName}\n` +
       `⭐ Rating: ${item.rating}/10\n` +
       (item.genre ? `🎭 Genre: ${item.genre}\n` : '') +
-      (item.seasons ? `📅 Seasons: ${item.seasons}\n` : '') +
-      (item.episodes ? `📅 Episodes: ${item.episodes}\n` : '') +
+      `\n🔞 **18+ Content - Age Verified**\n` +
       `\n📥 Click the button below to download`;
-    
-    const downloadData = `download_${category}_${item.title}`;
-    
-    // If it's a magnet link, show source
-    if (item.magnet) {
-      const sourceNames = {
-        '1337x': '🎬 1337x',
-        'nyaa': '🎌 Nyaa.si',
-        'yts': '🎥 YTS',
-        'fitgirl': '🎮 FitGirl'
-      };
-      const sourceDisplay = sourceNames[item.source] || '📥';
-      caption += `\n📡 Source: ${sourceDisplay}`;
-    }
     
     await bot.sendMessage(
       chatId,
@@ -389,7 +379,7 @@ async function sendMedia(chatId, item, category) {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: `📥 Download ${item.title}`, callback_data: downloadData }]
+            [{ text: `📥 Download ${item.title}`, callback_data: `download_${item.title}` }]
           ]
         }
       }
@@ -397,53 +387,37 @@ async function sendMedia(chatId, item, category) {
     
   } catch (error) {
     console.error("❌ Send media error:", error.message);
-    await bot.sendMessage(
-      chatId,
-      `${emoji} *${item.title}*\n📅 Year: ${item.year}\n⭐ Rating: ${item.rating}/10\n\n📥 Click the button below to download`,
-      { 
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: `📥 Download ${item.title}`, callback_data: `download_${category}_${item.title}` }]
-          ]
-        }
-      }
-    );
   }
 }
 
 // ================= DOWNLOAD MEDIA =================
-async function downloadAndSendMedia(chatId, item, category) {
+async function downloadAndSendMedia(chatId, item) {
   try {
-    // If magnet link, send magnet directly
-    if (item.magnet) {
-      const sourceEmojis = {
-        '1337x': '🎬',
-        'nyaa': '🎌',
-        'yts': '🎥',
-        'fitgirl': '🎮'
-      };
-      const emoji = sourceEmojis[item.source] || '🧲';
-      const sourceNames = {
-        '1337x': '1337x',
-        'nyaa': 'Nyaa.si',
-        'yts': 'YTS',
-        'fitgirl': 'FitGirl Repacks'
-      };
-      const sourceName = sourceNames[item.source] || 'Torrent';
-      
+    // Check if adult content and user is verified
+    if (item.adult && !await isUserVerified(chatId)) {
       await bot.sendMessage(
         chatId,
-        `🧲 *Magnet Link*\n\n` +
-        `🎬 *${item.title}*\n` +
+        `🔞 **Age Verification Required**\n\n` +
+        `This content is for adults only (18+).\n\n` +
+        `Please verify your age by sending: *I am 18+*`,
+        { parse_mode: "Markdown" }
+      );
+      return false;
+    }
+    
+    // Send magnet link
+    if (item.magnet) {
+      let msg = `🧲 *Magnet Link*\n\n` +
+        `🔞 *${item.title}*\n` +
         `📅 Year: ${item.year}\n` +
         `⭐ Rating: ${item.rating}/10\n` +
         (item.genre ? `🎭 Genre: ${item.genre}\n` : '') +
-        (item.seasons ? `📅 Seasons: ${item.seasons}\n` : '') +
-        (item.episodes ? `📅 Episodes: ${item.episodes}\n` : '') +
-        `\n📡 Source: ${emoji} ${sourceName}\n\n` +
-        `🔗 *Magnet Link:*\n` +
-        `\`${item.magnet}\``,
+        `\n🔗 *Magnet Link:*\n` +
+        `\`${item.magnet}\``;
+      
+      await bot.sendMessage(
+        chatId,
+        msg,
         { parse_mode: "Markdown" }
       );
       
@@ -456,91 +430,7 @@ async function downloadAndSendMedia(chatId, item, category) {
       return true;
     }
     
-    // Regular download for non-magnet links
-    const statusMsg = await bot.sendMessage(
-      chatId,
-      `📥 *Downloading: ${item.title}*...\n\n⏳ Please wait, this may take a moment.`,
-      { parse_mode: "Markdown" }
-    );
-    
-    try {
-      const response = await axios({
-        method: 'GET',
-        url: item.download,
-        responseType: 'stream',
-        timeout: 120000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-      
-      if (!fs.existsSync(path.join(__dirname, 'temp'))) {
-        fs.mkdirSync(path.join(__dirname, 'temp'));
-      }
-      
-      const tempFile = path.join(__dirname, 'temp', `${Date.now()}_${item.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`);
-      
-      const writer = fs.createWriteStream(tempFile);
-      response.data.pipe(writer);
-      
-      await new Promise((resolve, reject) => {
-        writer.on('finish', resolve);
-        writer.on('error', reject);
-      });
-      
-      const stats = fs.statSync(tempFile);
-      const fileSizeMB = stats.size / (1024 * 1024);
-      
-      const caption = `✅ *Download Complete!*\n\n` +
-        `🎬 *${item.title}*\n` +
-        `📅 Year: ${item.year}\n` +
-        `⭐ Rating: ${item.rating}/10\n` +
-        (item.genre ? `🎭 Genre: ${item.genre}\n` : '') +
-        (item.seasons ? `📅 Seasons: ${item.seasons}\n` : '') +
-        (item.episodes ? `📅 Episodes: ${item.episodes}\n` : '') +
-        `📦 Size: ${fileSizeMB.toFixed(1)} MB\n` +
-        `\n📥 *File sent successfully!*`;
-      
-      await bot.sendVideo(chatId, tempFile, { 
-        caption: caption,
-        supports_streaming: true
-      });
-      
-      try {
-        fs.unlinkSync(tempFile);
-      } catch (e) {}
-      
-      await bot.editMessageText(
-        `✅ *Download Complete!*\n\n${item.title} has been sent to you.`,
-        {
-          chat_id: chatId,
-          message_id: statusMsg.message_id,
-          parse_mode: "Markdown"
-        }
-      );
-      
-      const userId = String(chatId);
-      const user = await getUser(userId);
-      user.downloads = (user.downloads || 0) + 1;
-      await saveUser(user);
-      await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
-      
-      return true;
-      
-    } catch (downloadError) {
-      console.error("❌ Download error:", downloadError.message);
-      
-      await bot.editMessageText(
-        `⚠️ *Could not download the file.*\n\nPlease try again later.`,
-        {
-          chat_id: chatId,
-          message_id: statusMsg.message_id,
-          parse_mode: "Markdown"
-        }
-      );
-      
-      return false;
-    }
+    return false;
     
   } catch (error) {
     console.error("❌ Send media error:", error.message);
@@ -558,7 +448,7 @@ function getMainKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: '🎬 Film Download' }, { text: '💬 AI Chat' }],
+        [{ text: '🔞 Adult' }, { text: '💬 AI Chat' }],
         [{ text: '👑 Developer' }, { text: '📊 Status' }],
         [{ text: '💎 Pro' }, { text: '🔄 Reset' }, { text: '❓ Help' }]
       ],
@@ -568,15 +458,12 @@ function getMainKeyboard() {
   };
 }
 
-function getFilmCategoryKeyboard() {
+function getAdultKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: '🇹🇷 Turkish' }, { text: '🇰🇷 K-Drama' }, { text: '🎌 Anime' }],
-        [{ text: '🎬 American Movies' }, { text: '📺 American TV' }, { text: '🇮🇳 Indian' }],
-        [{ text: '🇦🇪 Arabic' }, { text: '🇰🇷 Korean Movies' }, { text: '🇯🇵 Japanese' }],
-        [{ text: '🇪🇺 European' }, { text: '🎲 Random Pick' }],
-        [{ text: '🔙 Exit Film Mode' }]
+        [{ text: '🔞 Browse Adult' }, { text: '🔞 Random' }],
+        [{ text: '✅ I am 18+' }, { text: '🔙 Main Menu' }]
       ],
       resize_keyboard: true,
       one_time_keyboard: false
@@ -584,329 +471,167 @@ function getFilmCategoryKeyboard() {
   };
 }
 
-// ================= CATEGORY MAP =================
-const categoryMap = {
-  '🇹🇷 Turkish': 'turkish',
-  '🇰🇷 K-Drama': 'kdrama',
-  '🎌 Anime': 'anime',
-  '🎬 American Movies': 'americanMovies',
-  '📺 American TV': 'americanTV',
-  '🇮🇳 Indian': 'indian',
-  '🇦🇪 Arabic': 'arabic',
-  '🇰🇷 Korean Movies': 'korean',
-  '🇯🇵 Japanese': 'japanese',
-  '🇪🇺 European': 'european'
-};
-
 // ================= COMMAND HANDLERS =================
 
 // Main Menu
-bot.onText(/\/start|\/menu/, async (msg) => {
+bot.onText(/\/start|\/menu|🔙 Main Menu/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  user.filmMode = false;
-  user.currentPage = 0;
+  user.adultMode = false;
   await saveUser(user);
   
   const isPremium = user.premium || user.isAdmin;
   const status = isPremium ? '💎 Alpha Pro' : '🆓 Free';
-  const counts = getMediaCount();
+  const ageStatus = user.ageVerified ? '✅ Verified 18+' : '❌ Not Verified';
   
   await bot.sendMessage(
     chatId,
     `🐺 **Alpha AI Pro**\n\n` +
     `👤 Status: ${status}\n` +
+    `🔞 Age: ${ageStatus}\n` +
     `📊 Messages: ${user.requests || 0}/${DAILY_LIMIT}\n` +
     `📥 Downloads: ${user.downloads || 0}\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📚 **Media Library**\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `🇹🇷 Turkish: ${counts.turkish}\n` +
-    `🇰🇷 K-Drama: ${counts.kdrama}\n` +
-    `🎌 Anime: ${counts.anime}\n` +
-    `🎬 American Movies: ${counts.americanMovies}\n` +
-    `📺 American TV: ${counts.americanTV}\n` +
-    `🇮🇳 Indian: ${counts.indian}\n` +
-    `🇦🇪 Arabic: ${counts.arabic}\n` +
-    `🇰🇷 Korean Movies: ${counts.korean}\n` +
-    `🇯🇵 Japanese: ${counts.japanese}\n` +
-    `🇪🇺 European: ${counts.european}\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📊 Total: ${counts.total} titles\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
     `📌 **Choose a mode:**\n` +
-    `🎬 *Film Download* - Browse & download\n` +
-    `💬 *AI Chat* - Chat with AI assistant\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🔞 **Adult** - 18+ content\n` +
+    `💬 **AI Chat** - Chat with AI\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
     `*Click a button below to get started!*`,
     { parse_mode: "Markdown", ...getMainKeyboard() }
   );
 });
 
-// ENTER FILM MODE
-bot.onText(/🎬 Film Download/, async (msg) => {
+// ENTER ADULT MODE
+bot.onText(/🔞 Adult/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  user.filmMode = true;
-  user.currentPage = 0;
+  user.adultMode = true;
   await saveUser(user);
-  
-  const counts = getMediaCount();
   
   await bot.sendMessage(
     chatId,
-    `🎬 **ALPHA CINEMA** 🎬\n\n` +
+    `🔞 **ADULT ZONE (18+)** 🔞\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📚 **FILM LIBRARY**\n` +
+    `⚠️ **WARNING:** Adult content\n` +
+    `🔞 **You must be 18+ to access**\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `🇹🇷 Turkish: ${counts.turkish}\n` +
-    `🇰🇷 K-Drama: ${counts.kdrama}\n` +
-    `🎌 Anime: ${counts.anime}\n` +
-    `🎬 American Movies: ${counts.americanMovies}\n` +
-    `📺 American TV: ${counts.americanTV}\n` +
-    `🇮🇳 Indian: ${counts.indian}\n` +
-    `🇦🇪 Arabic: ${counts.arabic}\n` +
-    `🇰🇷 Korean Movies: ${counts.korean}\n` +
-    `🇯🇵 Japanese: ${counts.japanese}\n` +
-    `🇪🇺 European: ${counts.european}\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📊 Total: ${counts.total} titles\n` +
+    `📚 **Available:** ${ADULT_CONTENT.length} titles\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `🔍 *Select a category below to browse:*`,
-    { parse_mode: "Markdown", ...getFilmCategoryKeyboard() }
+    `🔞 *Click "✅ I am 18+" to verify first!*`,
+    { parse_mode: "Markdown", ...getAdultKeyboard() }
   );
 });
 
-// EXIT FILM MODE
-bot.onText(/🔙 Exit Film Mode/, async (msg) => {
+// Age Verification
+bot.onText(/✅ I am 18\+/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  user.filmMode = false;
-  user.currentPage = 0;
-  await saveUser(user);
+  if (user.ageVerified) {
+    await bot.sendMessage(
+      chatId,
+      `✅ **You are already verified as 18+**\n\n` +
+      `🔞 Browse adult content below:`,
+      { parse_mode: "Markdown", ...getAdultKeyboard() }
+    );
+    return;
+  }
+  
+  await verifyAge(chatId);
   
   await bot.sendMessage(
     chatId,
-    `✅ **Exited Film Mode**\n\n` +
-    `You are now back in the main menu.\n\n` +
-    `📌 Choose an option:`,
-    { parse_mode: "Markdown", ...getMainKeyboard() }
+    `✅ **Age Verified Successfully!**\n\n` +
+    `🔞 You now have access to adult content.\n\n` +
+    `⚠️ *18+ only*`,
+    { parse_mode: "Markdown", ...getAdultKeyboard() }
   );
 });
 
-// ================= CATEGORY HANDLERS =================
-async function showCategory(chatId, userId, category, title, emoji) {
+// Browse Adult
+bot.onText(/🔞 Browse Adult/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  if (!user.filmMode) {
+  if (!user.ageVerified) {
     await bot.sendMessage(
       chatId,
-      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
-      { parse_mode: "Markdown" }
+      `🔞 **Age Verification Required**\n\n` +
+      `Click "✅ I am 18+" to verify.`,
+      { parse_mode: "Markdown", ...getAdultKeyboard() }
     );
     return;
   }
   
-  user.currentCategory = category;
-  user.currentPage = 0;
-  await saveUser(user);
+  const adultItems = ADULT_CONTENT.filter(item => item.adult);
   
-  const { items, total, hasMore } = getItemsByCategory(category, 0);
-  
-  if (items.length === 0) {
+  if (adultItems.length === 0) {
     await bot.sendMessage(
       chatId,
-      `❌ No ${title} found.`,
-      { parse_mode: "Markdown", ...getFilmCategoryKeyboard() }
+      `❌ No adult content found.`,
+      { parse_mode: "Markdown", ...getAdultKeyboard() }
     );
     return;
   }
   
   await bot.sendMessage(
     chatId,
-    `${emoji} *${title}* (${total} titles)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    `🔞 *Adult Content* (${adultItems.length} titles)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     { parse_mode: "Markdown" }
   );
   
-  for (const item of items) {
-    await sendMedia(chatId, item, category);
+  for (const item of adultItems) {
+    await sendMedia(chatId, item);
   }
-  
-  const navButtons = [];
-  if (hasMore) {
-    navButtons.push({ text: `⏩ Next Page (${total} total)`, callback_data: `page_${category}_1` });
-  }
-  navButtons.push({ text: `🔙 Back to Categories`, callback_data: `back_categories` });
-  
-  await bot.sendMessage(
-    chatId,
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📌 *Navigation:*`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [navButtons]
-      }
-    }
-  );
-}
-
-// Category Button Handlers
-bot.onText(/🇹🇷 Turkish/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'turkish', 'Turkish Series', '🇹🇷');
 });
 
-bot.onText(/🇰🇷 K-Drama/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'kdrama', 'K-Drama', '🇰🇷');
-});
-
-bot.onText(/🎌 Anime/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'anime', 'Anime', '🎌');
-});
-
-bot.onText(/🎬 American Movies/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'americanMovies', 'American Movies', '🎬');
-});
-
-bot.onText(/📺 American TV/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'americanTV', 'American TV Series', '📺');
-});
-
-bot.onText(/🇮🇳 Indian/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'indian', 'Indian Movies', '🇮🇳');
-});
-
-bot.onText(/🇦🇪 Arabic/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'arabic', 'Arabic Series', '🇦🇪');
-});
-
-bot.onText(/🇰🇷 Korean Movies/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'korean', 'Korean Movies', '🇰🇷');
-});
-
-bot.onText(/🇯🇵 Japanese/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'japanese', 'Japanese Movies', '🇯🇵');
-});
-
-bot.onText(/🇪🇺 European/, async (msg) => {
-  await showCategory(msg.chat.id, String(msg.from.id), 'european', 'European Movies', '🇪🇺');
-});
-
-// Random Pick
-bot.onText(/🎲 Random Pick/, async (msg) => {
+// Random Adult
+bot.onText(/🔞 Random/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  if (!user.filmMode) {
+  if (!user.ageVerified) {
     await bot.sendMessage(
       chatId,
-      `🎬 Please enter **Film Download** mode first!\n\nClick the "🎬 Film Download" button.`,
-      { parse_mode: "Markdown" }
+      `🔞 **Age Verification Required**\n\n` +
+      `Click "✅ I am 18+" to verify.`,
+      { parse_mode: "Markdown", ...getAdultKeyboard() }
     );
     return;
   }
   
-  const random = getRandomMedia();
-  await sendMedia(chatId, random, random.category);
+  const adultItems = ADULT_CONTENT.filter(item => item.adult);
+  
+  if (adultItems.length === 0) {
+    await bot.sendMessage(
+      chatId,
+      `❌ No adult content found.`,
+      { parse_mode: "Markdown", ...getAdultKeyboard() }
+    );
+    return;
+  }
+  
+  const random = adultItems[Math.floor(Math.random() * adultItems.length)];
+  await sendMedia(chatId, random);
 });
 
 // ================= INLINE BUTTON HANDLERS =================
 bot.on('callback_query', async (callbackQuery) => {
   const action = callbackQuery.data;
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
-  const userId = String(callbackQuery.from.id);
   
-  // Handle "Back to Categories"
-  if (action === 'back_categories') {
-    await bot.deleteMessage(chatId, messageId);
-    await bot.sendMessage(
-      chatId,
-      `🎬 **ALPHA CINEMA** 🎬\n\nSelect a category below:`,
-      { parse_mode: "Markdown", ...getFilmCategoryKeyboard() }
-    );
-    await bot.answerCallbackQuery(callbackQuery.id);
-    return;
-  }
-  
-  // Handle Page Navigation
-  if (action.startsWith('page_')) {
-    const parts = action.split('_');
-    const category = parts[1];
-    const page = parseInt(parts[2]);
-    
-    await bot.deleteMessage(chatId, messageId);
-    
-    const user = await getUser(userId);
-    const { items, total, hasMore } = getItemsByCategory(category, page);
-    
-    const categoryNames = {
-      turkish: 'Turkish Series', kdrama: 'K-Drama', anime: 'Anime',
-      americanMovies: 'American Movies', americanTV: 'American TV Series',
-      indian: 'Indian Movies', arabic: 'Arabic Series',
-      korean: 'Korean Movies', japanese: 'Japanese Movies',
-      european: 'European Movies'
-    };
-    const categoryEmojis = {
-      turkish: '🇹🇷', kdrama: '🇰🇷', anime: '🎌',
-      americanMovies: '🎬', americanTV: '📺', indian: '🇮🇳',
-      arabic: '🇦🇪', korean: '🇰🇷', japanese: '🇯🇵',
-      european: '🇪🇺'
-    };
-    
-    const title = categoryNames[category] || 'Results';
-    const emoji = categoryEmojis[category] || '📚';
-    
-    await bot.sendMessage(
-      chatId,
-      `${emoji} *${title}* (${total} titles) - Page ${page + 1}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-      { parse_mode: "Markdown" }
-    );
-    
-    for (const item of items) {
-      await sendMedia(chatId, item, category);
-    }
-    
-    const navButtons = [];
-    if (page > 0) {
-      navButtons.push({ text: `⏪ Previous`, callback_data: `page_${category}_${page - 1}` });
-    }
-    if (hasMore) {
-      navButtons.push({ text: `⏩ Next`, callback_data: `page_${category}_${page + 1}` });
-    }
-    navButtons.push({ text: `🔙 Back to Categories`, callback_data: `back_categories` });
-    
-    await bot.sendMessage(
-      chatId,
-      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📌 *Navigation:*`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [navButtons]
-        }
-      }
-    );
-    
-    await bot.answerCallbackQuery(callbackQuery.id);
-    return;
-  }
-  
-  // Handle Download
   if (action.startsWith('download_')) {
     try {
-      const parts = action.split('_');
-      const category = parts[1];
-      const title = parts.slice(2).join('_');
-      
-      // Find the item in the category
-      const items = getMediaByCategory(category) || [];
-      const item = items.find(m => m.title === title);
+      const title = action.replace('download_', '');
+      const item = ADULT_CONTENT.find(m => m.title === title);
       
       if (!item) {
         await bot.answerCallbackQuery(callbackQuery.id, {
@@ -921,16 +646,7 @@ bot.on('callback_query', async (callbackQuery) => {
         show_alert: false
       });
       
-      await bot.editMessageText(
-        `📥 *Downloading: ${item.title}*...\n\n⏳ Please wait, this may take a moment.`,
-        {
-          chat_id: chatId,
-          message_id: messageId,
-          parse_mode: "Markdown"
-        }
-      );
-      
-      await downloadAndSendMedia(chatId, item, category);
+      await downloadAndSendMedia(chatId, item);
       
     } catch (error) {
       console.error("❌ Download callback error:", error.message);
@@ -948,19 +664,14 @@ bot.onText(/💬 AI Chat/, async (msg) => {
   const userId = String(msg.from.id);
   const user = await getUser(userId);
   
-  user.filmMode = false;
+  user.adultMode = false;
   await saveUser(user);
   
   await bot.sendMessage(
     chatId,
     `💬 **Chat Mode**\n\n` +
-    `Send me any message and I'll respond!\n\n` +
-    `💡 Try asking:\n` +
-    `• "Explain quantum computing"\n` +
-    `• "Write a poem about AI"\n` +
-    `• "Help me with my code"\n\n` +
-    `✨ *Type your message now!*\n\n` +
-    `📌 *To go back to films, click "🎬 Film Download"*`,
+    `Send me any message!\n\n` +
+    `✨ *Type your message now!*`,
     { parse_mode: "Markdown", ...getMainKeyboard() }
   );
 });
@@ -982,15 +693,16 @@ bot.onText(/📊 Status/, async (msg) => {
   const user = await getUser(userId);
   const isPremium = user.premium || user.isAdmin;
   const days = Math.floor((Date.now() - new Date(user.joinedDate).getTime()) / (1000 * 60 * 60 * 24));
+  const ageStatus = user.ageVerified ? '✅ Verified 18+' : '❌ Not Verified';
   
   await bot.sendMessage(
     chatId,
     `📊 **Your Profile**\n\n` +
     `👤 User ID: \`${userId}\`\n` +
     `💎 Plan: ${isPremium ? 'Alpha Pro' : 'Free'}\n` +
+    `🔞 Age: ${ageStatus}\n` +
     `📊 Messages: ${user.requests || 0}/${DAILY_LIMIT}\n` +
     `📥 Downloads: ${user.downloads || 0}\n` +
-    `🪙 Coins: ${user.coins || 0}\n` +
     `📅 Days Active: ${days}\n\n` +
     `${isPremium ? '🎉 Enjoy unlimited access!' : '💎 Upgrade with the Pro button'}`,
     { parse_mode: "Markdown" }
@@ -1035,9 +747,9 @@ bot.onText(/💎 Pro/, async (msg) => {
       `🔒 Only $5 - One Time!\n\n` +
       `**✨ Pro Features:**\n` +
       `• Unlimited AI Chat\n` +
-      `• Unlimited Film Downloads\n` +
+      `• Unlimited Downloads\n` +
       `• Priority Support\n\n` +
-      `*Upgrade now and unlock full power!*`,
+      `*Upgrade now!*`,
       { parse_mode: "Markdown" }
     );
   } catch (error) {
@@ -1063,12 +775,10 @@ bot.onText(/❓ Help/, async (msg) => {
     chatId,
     `📖 **Alpha AI Pro - Help**\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `🎬 **Film Download Mode**\n` +
-    `• Click "🎬 Film Download" to enter\n` +
-    `• Select a category from the buttons\n` +
-    `• Browse titles with Next/Previous buttons\n` +
-    `• Click "Download" to get files\n` +
-    `• Files download directly in Telegram\n` +
+    `🔞 **Adult Mode**\n` +
+    `• Click "🔞 Adult" to enter\n` +
+    `• Click "✅ I am 18+" to verify age\n` +
+    `• Browse adult content\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `💬 **AI Chat Mode**\n` +
     `• Click "💬 AI Chat" to enter\n` +
@@ -1080,7 +790,7 @@ bot.onText(/❓ Help/, async (msg) => {
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `**Free Limits:**\n` +
     `• ${DAILY_LIMIT} AI chat messages\n` +
-    `• Unlimited film downloads\n` +
+    `• Unlimited adult content\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `**Alpha Pro:**\n` +
     `• Unlimited everything! 🚀`,
@@ -1096,11 +806,9 @@ bot.on("message", async (msg) => {
 
   // Ignore all button texts
   const buttonTexts = [
-    '🔙 Exit Film Mode', '🎬 Film Download', '🇹🇷 Turkish', '🇰🇷 K-Drama',
-    '🎌 Anime', '🎬 American Movies', '📺 American TV', '🇮🇳 Indian',
-    '🇦🇪 Arabic', '🇰🇷 Korean Movies', '🇯🇵 Japanese', '🇪🇺 European',
-    '🎲 Random Pick', '💬 AI Chat', '👑 Developer', '📊 Status',
-    '💎 Pro', '🔄 Reset', '❓ Help', '/start', '/menu'
+    '🔙 Main Menu', '🔞 Adult', '🔞 Browse Adult', '🔞 Random',
+    '✅ I am 18+', '💬 AI Chat', '👑 Developer',
+    '📊 Status', '💎 Pro', '🔄 Reset', '❓ Help', '/start', '/menu'
   ];
   
   if (!text || buttonTexts.includes(text) || text.startsWith("/")) {
@@ -1110,26 +818,46 @@ bot.on("message", async (msg) => {
   try {
     const user = await getUser(userId);
     
-    // If in film mode, ignore text messages
-    if (user.filmMode) {
+    // Handle age verification via text
+    if (text.toLowerCase().includes('i am 18') || text.toLowerCase().includes('i am 18+')) {
+      if (user.ageVerified) {
+        await bot.sendMessage(
+          chatId,
+          `✅ **You are already verified as 18+**`,
+          { parse_mode: "Markdown", ...getAdultKeyboard() }
+        );
+        return;
+      }
+      
+      await verifyAge(chatId);
       await bot.sendMessage(
         chatId,
-        `🎬 **Film Download Mode**\n\n` +
-        `Please use the buttons below to browse and download films.\n\n` +
-        `📌 *Select a category to get started!*`,
-        { parse_mode: "Markdown", ...getFilmCategoryKeyboard() }
+        `✅ **Age Verified Successfully!**\n\n` +
+        `🔞 You now have access to adult content.\n\n` +
+        `⚠️ *Remember: This content is for adults only (18+).*`,
+        { parse_mode: "Markdown", ...getAdultKeyboard() }
+      );
+      return;
+    }
+    
+    // If in adult mode, ignore text messages
+    if (user.adultMode) {
+      await bot.sendMessage(
+        chatId,
+        `🔞 **Adult Mode**\n\n` +
+        `Please use the buttons below to browse adult content.`,
+        { parse_mode: "Markdown", ...getAdultKeyboard() }
       );
       return;
     }
     
     // ===== AI CHAT MODE =====
-    // Check for owner question FIRST - override everything
+    // Check for owner question
     if (isOwnerQuestion(text)) {
       await bot.sendMessage(
         chatId,
         `👑 **Alpha AI Pro - Developer**\n\n` +
         `I was created by **${OWNER.name}** (@${OWNER.username}), a passionate Full-Stack Developer and AI Enthusiast.\n\n` +
-        `He built me to help people with their questions, provide information, and assist with various tasks.\n\n` +
         `🔗 **Connect with the developer:**\n` +
         `• Telegram: ${OWNER.telegram}\n` +
         `• GitHub: ${OWNER.github}\n` +
@@ -1140,7 +868,7 @@ bot.on("message", async (msg) => {
       return;
     }
     
-    // Check daily limit first
+    // Check daily limit
     if (!checkQuota(userId)) {
       await bot.sendMessage(
         chatId,
@@ -1176,7 +904,6 @@ bot.on("message", async (msg) => {
 
     await bot.sendChatAction(chatId, "typing");
 
-    // Store user message
     user.chatHistory = user.chatHistory || [];
     user.chatHistory.push({ role: "user", content: text });
     user.requests = (user.requests || 0) + 1;
@@ -1194,7 +921,6 @@ bot.on("message", async (msg) => {
     }
 
     try {
-      // Use AI with custom system prompt that NEVER mentions Google or other AI teams
       const result = await aiProcessor.generateContent({
         contents: [{
           role: "user",
@@ -1265,7 +991,8 @@ app.get("/success", async (req, res) => {
           `🎉 You now have unlimited access to all features!\n\n` +
           `**✨ Features:**\n` +
           `• Unlimited AI Chat\n` +
-          `• Unlimited Film Downloads\n` +
+          `• Unlimited Adult Content\n` +
+          `• Unlimited Downloads\n` +
           `• Priority Support\n\n` +
           `🚀 *Enjoy the full power!*`
         );
@@ -1288,7 +1015,7 @@ app.get("/success", async (req, res) => {
     </head>
     <body>
       <div class="card">
-        <div class="emoji">🎬</div>
+        <div class="emoji">🔞</div>
         <h1>Alpha Cinema Pro Unlocked!</h1>
         <p>Welcome to the Alpha Club!</p>
         <p>Close this window and return to Telegram</p>
@@ -1327,14 +1054,13 @@ app.get("/", (req, res) => {
 app.get("/api/status", async (req, res) => {
   try {
     const stats = await Stats.findOne();
-    const counts = getMediaCount();
     res.json({
       status: "✅ Online",
       users: stats?.totalUsers || 0,
       totalMessages: stats?.totalMessages || 0,
       totalImages: stats?.totalImages || 0,
       totalDownloads: stats?.totalDownloads || 0,
-      mediaCount: counts,
+      adultContent: ADULT_CONTENT.length,
       developer: OWNER.name
     });
   } catch {
@@ -1348,11 +1074,10 @@ app.get("/api/status", async (req, res) => {
 
 // ================= START SERVER =================
 app.listen(PORT, async () => {
-  const counts = getMediaCount();
-  console.log(`🎬 Alpha Cinema Pro Server running on port ${PORT}`);
+  console.log(`🔞 Alpha Adult Pro Server running on port ${PORT}`);
   console.log(`👑 Developer: ${OWNER.name} (@${OWNER.username})`);
   console.log(`📊 Database: MongoDB`);
-  console.log(`📚 Media Library: ${counts.total} titles`);
+  console.log(`📚 Adult Content: ${ADULT_CONTENT.length} titles`);
   await setWebhook();
   console.log(`✅ Bot ready!`);
 });
