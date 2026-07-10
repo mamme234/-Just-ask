@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { createCanvas } from 'canvas';
 import mongoose from "mongoose";
 import fs from "fs";
-import { MEDIA_DB, getMediaByCategory, getMediaCount, TMDB_CONFIG } from './media/index.js';
+import { MEDIA_DB, getMediaByCategory, getMediaCount } from './media/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,8 +25,8 @@ const PORT = process.env.PORT || 3000;
 // ================= ADMIN CONFIGURATION =================
 const ADMIN_IDS = ["7154361039"];
 
-// ================= DEVELOPER CONFIGURATION =================
-const DEVELOPER = {
+// ================= OWNER/DEVELOPER CONFIGURATION =================
+const OWNER = {
   name: "Muhammad Ilyas",
   username: "@KING_OF_ALPHA",
   telegram: "https://t.me/KING_OF_ALPHA",
@@ -37,8 +37,8 @@ const DEVELOPER = {
   achievements: ["Built 50+ Bots", "10k+ Active Users", "AI Innovator", "Alpha Developer"]
 };
 
-// ================= DEVELOPER KEYWORDS =================
-const DEVELOPER_KEYWORDS = [
+// ================= OWNER KEYWORDS =================
+const OWNER_KEYWORDS = [
   'who created you', 'who made you', 'who is your developer',
   'who is your creator', 'who built you', 'who programmed you',
   'who developed you', 'who is the developer', 'who is the creator',
@@ -52,12 +52,11 @@ const DEVELOPER_KEYWORDS = [
 // ================= VALIDATE ENV =================
 console.log("🔍 Checking environment variables...");
 console.log("BOT_TOKEN:", process.env.BOT_TOKEN ? "✅ Set" : "❌ Missing");
-console.log("GEMINI_API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
-console.log("TMDB_API_KEY:", process.env.TMDB_API_KEY ? "✅ Set" : "❌ Missing");
+console.log("API_KEY:", process.env.GEMINI_API_KEY ? "✅ Set" : "❌ Missing");
 console.log("MONGODB_URI:", process.env.MONGODB_URI ? "✅ Set" : "❌ Missing");
 console.log("WEBHOOK_URL:", process.env.WEBHOOK_URL || "❌ Missing");
 
-const requiredEnv = ['BOT_TOKEN', 'GEMINI_API_KEY', 'TMDB_API_KEY', 'MONGODB_URI', 'WEBHOOK_URL'];
+const requiredEnv = ['BOT_TOKEN', 'GEMINI_API_KEY', 'MONGODB_URI', 'WEBHOOK_URL'];
 for (const env of requiredEnv) {
   if (!process.env[env]) {
     console.error(`❌ Missing required environment variable: ${env}`);
@@ -203,7 +202,8 @@ function getUserFallback(id) {
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ================= AI ENGINE =================
+// ================= AI ENGINE (Hidden - No Google Names) =================
+// Using AI engine but never mentioning its name
 const aiEngine = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const AI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash"];
 let activeModel = null;
@@ -250,7 +250,7 @@ async function initializeAI() {
       activeModel = modelName;
       aiProcessor = testModel;
       aiReady = true;
-      console.log(`✅ Alpha AI Engine initialized with ${modelName}`);
+      console.log(`✅ AI Engine initialized`);
       return true;
     } catch (error) {
       console.error(`❌ Model failed:`, error.message);
@@ -283,43 +283,6 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     res.sendStatus(500);
   }
 });
-
-// ================= TMDB FUNCTIONS =================
-async function fetchMoviePoster(tmdbId) {
-  try {
-    if (!tmdbId) return null;
-    const response = await axios.get(
-      `${TMDB_CONFIG.apiUrl}/movie/${tmdbId}`,
-      {
-        params: { api_key: process.env.TMDB_API_KEY },
-        timeout: 5000
-      }
-    );
-    const posterPath = response.data.poster_path;
-    return posterPath ? `${TMDB_CONFIG.baseUrl}${posterPath}` : null;
-  } catch (error) {
-    console.error("❌ TMDB error:", error.message);
-    return null;
-  }
-}
-
-async function fetchTVPoster(tmdbId) {
-  try {
-    if (!tmdbId) return null;
-    const response = await axios.get(
-      `${TMDB_CONFIG.apiUrl}/tv/${tmdbId}`,
-      {
-        params: { api_key: process.env.TMDB_API_KEY },
-        timeout: 5000
-      }
-    );
-    const posterPath = response.data.poster_path;
-    return posterPath ? `${TMDB_CONFIG.baseUrl}${posterPath}` : null;
-  } catch (error) {
-    console.error("❌ TMDB error:", error.message);
-    return null;
-  }
-}
 
 // ================= MEDIA FUNCTIONS =================
 function getCategoryEmoji(category) {
@@ -354,29 +317,30 @@ function getRandomMedia() {
   return all[Math.floor(Math.random() * all.length)];
 }
 
-function getDeveloperInfo() {
+// ================= OWNER INFO =================
+function getOwnerInfo() {
   return `👑 **Alpha AI Pro - Developer**\n\n` +
-    `👤 **Name:** ${DEVELOPER.name}\n` +
-    `📝 **Username:** ${DEVELOPER.username}\n` +
-    `📋 **Bio:** ${DEVELOPER.bio}\n\n` +
+    `👤 **Name:** ${OWNER.name}\n` +
+    `📝 **Username:** ${OWNER.username}\n` +
+    `📋 **Bio:** ${OWNER.bio}\n\n` +
     `💻 **Skills:**\n` +
-    `${DEVELOPER.skills.map(s => `• ${s}`).join('\n')}\n\n` +
+    `${OWNER.skills.map(s => `• ${s}`).join('\n')}\n\n` +
     `🏆 **Achievements:**\n` +
-    `${DEVELOPER.achievements.map(a => `• ${a}`).join('\n')}\n\n` +
+    `${OWNER.achievements.map(a => `• ${a}`).join('\n')}\n\n` +
     `🔗 **Connect:**\n` +
-    `• Telegram: ${DEVELOPER.telegram}\n` +
-    `• GitHub: ${DEVELOPER.github}\n` +
-    `• Email: ${DEVELOPER.email}\n\n` +
+    `• Telegram: ${OWNER.telegram}\n` +
+    `• GitHub: ${OWNER.github}\n` +
+    `• Email: ${OWNER.email}\n\n` +
     `❤️ *Built with passion for the community!*`;
 }
 
-function isDeveloperQuestion(text) {
+function isOwnerQuestion(text) {
   const lowerText = text.toLowerCase();
-  return DEVELOPER_KEYWORDS.some(keyword => lowerText.includes(keyword));
+  return OWNER_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-// ================= SEND MEDIA WITH POSTER =================
-async function sendMediaWithPoster(chatId, item, type, category) {
+// ================= SEND MEDIA =================
+async function sendMedia(chatId, item, category) {
   try {
     const emojiMap = {
       'turkish': '🇹🇷', 'kdrama': '🇰🇷', 'anime': '🎌',
@@ -395,16 +359,6 @@ async function sendMediaWithPoster(chatId, item, type, category) {
     };
     const typeName = typeNames[category] || 'Media';
     
-    // Fetch poster from TMDB if available
-    let posterUrl = null;
-    if (item.tmdbId && (category === 'americanMovies' || category === 'americanTV')) {
-      if (category === 'americanTV') {
-        posterUrl = await fetchTVPoster(item.tmdbId);
-      } else {
-        posterUrl = await fetchMoviePoster(item.tmdbId);
-      }
-    }
-    
     const caption = `${emoji} *${item.title}*\n` +
       `📅 Year: ${item.year}\n` +
       `📋 Type: ${typeName}\n` +
@@ -416,30 +370,30 @@ async function sendMediaWithPoster(chatId, item, type, category) {
     
     const downloadData = `download_${category}_${item.title}`;
     
-    if (posterUrl) {
-      await bot.sendPhoto(chatId, posterUrl, {
-        caption: caption,
+    // If it's a magnet link, show source
+    if (item.magnet) {
+      const sourceNames = {
+        '1337x': '🎬 1337x',
+        'nyaa': '🎌 Nyaa.si',
+        'yts': '🎥 YTS',
+        'fitgirl': '🎮 FitGirl'
+      };
+      const sourceDisplay = sourceNames[item.source] || '📥';
+      caption += `\n📡 Source: ${sourceDisplay}`;
+    }
+    
+    await bot.sendMessage(
+      chatId,
+      caption,
+      { 
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
             [{ text: `📥 Download ${item.title}`, callback_data: downloadData }]
           ]
         }
-      });
-    } else {
-      await bot.sendMessage(
-        chatId,
-        caption,
-        { 
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: `📥 Download ${item.title}`, callback_data: downloadData }]
-            ]
-          }
-        }
-      );
-    }
+      }
+    );
     
   } catch (error) {
     console.error("❌ Send media error:", error.message);
@@ -461,6 +415,48 @@ async function sendMediaWithPoster(chatId, item, type, category) {
 // ================= DOWNLOAD MEDIA =================
 async function downloadAndSendMedia(chatId, item, category) {
   try {
+    // If magnet link, send magnet directly
+    if (item.magnet) {
+      const sourceEmojis = {
+        '1337x': '🎬',
+        'nyaa': '🎌',
+        'yts': '🎥',
+        'fitgirl': '🎮'
+      };
+      const emoji = sourceEmojis[item.source] || '🧲';
+      const sourceNames = {
+        '1337x': '1337x',
+        'nyaa': 'Nyaa.si',
+        'yts': 'YTS',
+        'fitgirl': 'FitGirl Repacks'
+      };
+      const sourceName = sourceNames[item.source] || 'Torrent';
+      
+      await bot.sendMessage(
+        chatId,
+        `🧲 *Magnet Link*\n\n` +
+        `🎬 *${item.title}*\n` +
+        `📅 Year: ${item.year}\n` +
+        `⭐ Rating: ${item.rating}/10\n` +
+        (item.genre ? `🎭 Genre: ${item.genre}\n` : '') +
+        (item.seasons ? `📅 Seasons: ${item.seasons}\n` : '') +
+        (item.episodes ? `📅 Episodes: ${item.episodes}\n` : '') +
+        `\n📡 Source: ${emoji} ${sourceName}\n\n` +
+        `🔗 *Magnet Link:*\n` +
+        `\`${item.magnet}\``,
+        { parse_mode: "Markdown" }
+      );
+      
+      // Track download
+      const userId = String(chatId);
+      const user = await getUser(userId);
+      user.downloads = (user.downloads || 0) + 1;
+      await saveUser(user);
+      await Stats.findOneAndUpdate({}, { $inc: { totalDownloads: 1 } });
+      return true;
+    }
+    
+    // Regular download for non-magnet links
     const statusMsg = await bot.sendMessage(
       chatId,
       `📥 *Downloading: ${item.title}*...\n\n⏳ Please wait, this may take a moment.`,
@@ -739,7 +735,7 @@ async function showCategory(chatId, userId, category, title, emoji) {
   );
   
   for (const item of items) {
-    await sendMediaWithPoster(chatId, item, category, category);
+    await sendMedia(chatId, item, category);
   }
   
   const navButtons = [];
@@ -817,7 +813,7 @@ bot.onText(/🎲 Random Pick/, async (msg) => {
   }
   
   const random = getRandomMedia();
-  await sendMediaWithPoster(chatId, random, random.category, random.category);
+  await sendMedia(chatId, random, random.category);
 });
 
 // ================= INLINE BUTTON HANDLERS =================
@@ -874,7 +870,7 @@ bot.on('callback_query', async (callbackQuery) => {
     );
     
     for (const item of items) {
-      await sendMediaWithPoster(chatId, item, category, category);
+      await sendMedia(chatId, item, category);
     }
     
     const navButtons = [];
@@ -946,7 +942,7 @@ bot.on('callback_query', async (callbackQuery) => {
   }
 });
 
-// AI Chat Button
+// ================= AI CHAT BUTTON =================
 bot.onText(/💬 AI Chat/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -957,7 +953,7 @@ bot.onText(/💬 AI Chat/, async (msg) => {
   
   await bot.sendMessage(
     chatId,
-    `💬 **AI Chat Mode**\n\n` +
+    `💬 **Chat Mode**\n\n` +
     `Send me any message and I'll respond!\n\n` +
     `💡 Try asking:\n` +
     `• "Explain quantum computing"\n` +
@@ -969,17 +965,17 @@ bot.onText(/💬 AI Chat/, async (msg) => {
   );
 });
 
-// Developer Button
+// ================= DEVELOPER BUTTON =================
 bot.onText(/👑 Developer/, async (msg) => {
   const chatId = msg.chat.id;
   await bot.sendMessage(
     chatId,
-    getDeveloperInfo(),
+    getOwnerInfo(),
     { parse_mode: "Markdown", disable_web_page_preview: true }
   );
 });
 
-// Status Button
+// ================= STATUS BUTTON =================
 bot.onText(/📊 Status/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -1001,7 +997,7 @@ bot.onText(/📊 Status/, async (msg) => {
   );
 });
 
-// Pro Button
+// ================= PRO BUTTON =================
 bot.onText(/💎 Pro/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -1049,7 +1045,7 @@ bot.onText(/💎 Pro/, async (msg) => {
   }
 });
 
-// Reset Button
+// ================= RESET BUTTON =================
 bot.onText(/🔄 Reset/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
@@ -1060,7 +1056,7 @@ bot.onText(/🔄 Reset/, async (msg) => {
   await bot.sendMessage(chatId, `🔄 **Reset Complete!**\n\nFresh start! Send any message.`);
 });
 
-// Help Button
+// ================= HELP BUTTON =================
 bot.onText(/❓ Help/, async (msg) => {
   const chatId = msg.chat.id;
   await bot.sendMessage(
@@ -1127,10 +1123,18 @@ bot.on("message", async (msg) => {
     }
     
     // ===== AI CHAT MODE =====
-    if (isDeveloperQuestion(text)) {
+    // Check for owner question FIRST - override everything
+    if (isOwnerQuestion(text)) {
       await bot.sendMessage(
         chatId,
-        getDeveloperInfo(),
+        `👑 **Alpha AI Pro - Developer**\n\n` +
+        `I was created by **${OWNER.name}** (@${OWNER.username}), a passionate Full-Stack Developer and AI Enthusiast.\n\n` +
+        `He built me to help people with their questions, provide information, and assist with various tasks.\n\n` +
+        `🔗 **Connect with the developer:**\n` +
+        `• Telegram: ${OWNER.telegram}\n` +
+        `• GitHub: ${OWNER.github}\n` +
+        `• Email: ${OWNER.email}\n\n` +
+        `❤️ *Built with passion for the community!*`,
         { parse_mode: "Markdown", disable_web_page_preview: true }
       );
       return;
@@ -1190,11 +1194,17 @@ bot.on("message", async (msg) => {
     }
 
     try {
+      // Use AI with custom system prompt that NEVER mentions Google or other AI teams
       const result = await aiProcessor.generateContent({
         contents: [{
           role: "user",
           parts: [{ 
-            text: `You are Alpha AI Pro, a professional AI assistant. 
+            text: `You are Alpha AI Pro, a professional AI assistant created by ${OWNER.name} (@${OWNER.username}). 
+            You were built and developed by ${OWNER.name}, a Full-Stack Developer and AI Enthusiast.
+            
+            IMPORTANT: NEVER mention Google, Gemini, OpenAI, or any other company or AI team.
+            ALWAYS say you were created by ${OWNER.name} (@${OWNER.username}) if asked about your origin.
+            
             Provide clear, detailed, and helpful responses. Use formatting when needed.
             
             Conversation:
@@ -1324,12 +1334,14 @@ app.get("/api/status", async (req, res) => {
       totalMessages: stats?.totalMessages || 0,
       totalImages: stats?.totalImages || 0,
       totalDownloads: stats?.totalDownloads || 0,
-      mediaCount: counts
+      mediaCount: counts,
+      developer: OWNER.name
     });
   } catch {
     res.json({
       status: "✅ Online",
-      users: Object.keys(fallbackDB.users).length
+      users: Object.keys(fallbackDB.users).length,
+      developer: OWNER.name
     });
   }
 });
@@ -1338,21 +1350,9 @@ app.get("/api/status", async (req, res) => {
 app.listen(PORT, async () => {
   const counts = getMediaCount();
   console.log(`🎬 Alpha Cinema Pro Server running on port ${PORT}`);
-  console.log(`👑 Admin: ${ADMIN_IDS.join(', ')}`);
+  console.log(`👑 Developer: ${OWNER.name} (@${OWNER.username})`);
   console.log(`📊 Database: MongoDB`);
-  console.log(`📚 Media Library:`);
-  console.log(`   🇹🇷 Turkish: ${counts.turkish}`);
-  console.log(`   🇰🇷 K-Drama: ${counts.kdrama}`);
-  console.log(`   🎌 Anime: ${counts.anime}`);
-  console.log(`   🎬 American Movies: ${counts.americanMovies}`);
-  console.log(`   📺 American TV: ${counts.americanTV}`);
-  console.log(`   🇮🇳 Indian: ${counts.indian}`);
-  console.log(`   🇦🇪 Arabic: ${counts.arabic}`);
-  console.log(`   🇰🇷 Korean Movies: ${counts.korean}`);
-  console.log(`   🇯🇵 Japanese: ${counts.japanese}`);
-  console.log(`   🇪🇺 European: ${counts.european}`);
-  console.log(`   📊 Total: ${counts.total} titles`);
-  console.log(`🖼️ TMDB Posters: Enabled`);
+  console.log(`📚 Media Library: ${counts.total} titles`);
   await setWebhook();
   console.log(`✅ Bot ready!`);
 });
